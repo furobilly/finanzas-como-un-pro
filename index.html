@@ -25,6 +25,25 @@
   window._fsDoc       = doc;
   window._fsSetDoc    = setDoc;
   window._fsGetDoc    = getDoc;
+
+  // Exponer loadFromFirestore y saveToFirestore globalmente
+  window._loadFromFirestore = async (userId) => {
+    try{
+      const ref = doc(firestore, 'usuarios', userId);
+      const snap = await getDoc(ref);
+      if(snap.exists() && snap.data().db) return JSON.parse(snap.data().db);
+    }catch(e){ console.warn('Firestore load error:', e); }
+    return null;
+  };
+
+  window._saveToFirestore = (userId, db) => {
+    try{
+      const ref = doc(firestore, 'usuarios', userId);
+      setDoc(ref, { db: JSON.stringify(db) }, { merge: true })
+        .catch(e => console.warn('Firestore save error:', e));
+    }catch(e){}
+  };
+
   window._firebaseReady = true;
   // Esperar a que el DOM esté listo antes de disparar el evento
   if(document.readyState === 'complete'){
