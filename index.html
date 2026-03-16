@@ -581,11 +581,41 @@ let activeUserId = null; // ID del usuario activo
 let _pinBuffer   = '';
 let _pinTarget   = null; // ID del usuario al que se le está pidiendo PIN
 
+// ── USUARIOS: sync con Firestore ─────────────────────────────────────────────
+async function syncUsersFromCloud(){
+  if(!window._loadFromFirestore) return;
+  try{
+    const snap = await window._fsGetDoc(window._fsDoc(window._firestore,'meta','users'));
+    if(snap.exists()&&snap.data().list){
+      const cloudUsers = JSON.parse(snap.data().list);
+      // Merge: combinar usuarios locales y de nube, sin duplicados
+      const local = getUsers();
+      const merged = [...cloudUsers];
+      for(const u of local){
+        if(!merged.find(x=>x.id===u.id)) merged.push(u);
+      }
+      saveUsers(merged);
+    }
+  }catch(e){ console.warn('syncUsers error:',e); }
+}
+
+async function saveUsersToCloud(users){
+  if(!window._fsSetDoc||!window._fsDoc||!window._firestore) return;
+  try{
+    window._fsSetDoc(
+      window._fsDoc(window._firestore,'meta','users'),
+      {list: JSON.stringify(users)},
+      {merge:true}
+    );
+  }catch(e){ console.warn('saveUsers error:',e); }
+}
+
 function getUsers(){
   try{return JSON.parse(localStorage.getItem('fcup_users')||'[]');}catch(e){return[];}
 }
 function saveUsers(users){
   localStorage.setItem('fcup_users',JSON.stringify(users));
+  saveUsersToCloud(users);
 }
 function getBlockInfo(){
   try{return JSON.parse(localStorage.getItem('fcup_blocked')||'null');}catch(e){return null;}
@@ -611,12 +641,15 @@ function saveUserDb(userId,db){
 }
 
 // ── Pantalla de login ──────────────────────────────────
-function renderLoginScreen(){
+async function renderLoginScreen(){
   _pinBuffer='';
   _pinTarget=null;
   document.getElementById('pinSection').style.display='none';
   document.getElementById('pinError').textContent='';
   updatePinDots();
+
+  // Sincronizar usuarios desde la nube primero
+  await syncUsersFromCloud();
 
   const users=getUsers();
   const list=document.getElementById('userCardsList');
