@@ -271,18 +271,34 @@ tr:hover td{background:var(--bg-subtle)}
 <div id="loginScreen">
   <div class="login-box">
     <div class="login-title">Finanzas Como Un Pro</div>
-    <div class="login-sub">Selecciona tu perfil para continuar</div>
+    <div class="login-sub" id="loginSub">¿Qué deseas hacer?</div>
 
-    <div class="user-cards" id="userCardsList"></div>
+    <!-- Botones iniciales -->
+    <div id="loginOptions" style="display:flex;flex-direction:column;gap:var(--space-sm);margin-bottom:var(--space-md)">
+      <button class="btn btn-primary" style="width:100%;padding:14px;font-size:1rem" onclick="showExistingUser()">🔑 Ya tengo cuenta</button>
+      <button class="btn btn-ghost" style="width:100%;padding:14px;font-size:1rem" onclick="showNewUser()">✨ Soy nuevo</button>
+    </div>
 
-    <!-- PIN section (se muestra al seleccionar usuario) -->
+    <!-- Usuarios locales (si existen) -->
+    <div class="user-cards" id="userCardsList" style="display:none"></div>
+
+    <!-- Buscar cuenta existente -->
+    <div id="findUserSection" style="display:none;margin-bottom:var(--space-md)">
+      <div class="form-group" style="margin-bottom:var(--space-sm)">
+        <label>Tu apodo</label>
+        <input id="findNick" class="inp" placeholder="Ej: Toño" oninput="this.value=this.value.toLowerCase()"/>
+      </div>
+      <button class="btn btn-primary" style="width:100%" onclick="findUser()">🔍 Buscar mi cuenta</button>
+      <div class="err-msg" id="findErr" style="margin-top:6px"></div>
+      <button class="btn btn-ghost" style="width:100%;margin-top:var(--space-sm)" onclick="backToOptions()">← Regresar</button>
+    </div>
+
+    <!-- PIN section -->
     <div class="pin-section" id="pinSection">
       <div class="pin-label" id="pinLabel">Ingresa tu PIN</div>
       <div class="pin-dots" id="pinDots">
-        <div class="pin-dot" id="d0"></div>
-        <div class="pin-dot" id="d1"></div>
-        <div class="pin-dot" id="d2"></div>
-        <div class="pin-dot" id="d3"></div>
+        <div class="pin-dot" id="d0"></div><div class="pin-dot" id="d1"></div>
+        <div class="pin-dot" id="d2"></div><div class="pin-dot" id="d3"></div>
       </div>
       <div class="pin-pad">
         <button class="pin-btn" onclick="pinPress('1')">1</button>
@@ -299,33 +315,32 @@ tr:hover td{background:var(--bg-subtle)}
         <button class="pin-btn enter" onclick="pinEnter()">✓</button>
       </div>
       <div class="pin-error" id="pinError"></div>
+      <button class="btn btn-ghost" style="width:100%;margin-top:var(--space-sm)" onclick="backToOptions()">← Regresar</button>
     </div>
 
     <!-- Nuevo usuario -->
-    <div class="new-user-section">
-      <button class="new-user-toggle" id="newUserToggle" onclick="toggleNewUser()">＋ Crear nuevo usuario</button>
-      <div class="new-user-form" id="newUserForm">
-        <div class="form-group" style="margin-bottom:var(--space-sm)">
-          <label>Nombre completo</label>
-          <input id="nuName" class="inp" placeholder="Ej: José López"/>
-        </div>
-        <div class="form-group" style="margin-bottom:var(--space-sm)">
-          <label>Apodo</label>
-          <input id="nuNick" class="inp" placeholder="Ej: Toño"/>
-        </div>
-        <div class="form-group" style="margin-bottom:var(--space-sm)">
-          <label>PIN de 4 dígitos</label>
-          <input id="nuPin" class="inp" type="password" maxlength="4" inputmode="numeric" placeholder="••••"/>
-        </div>
-        <div class="form-group" style="margin-bottom:var(--space-sm)">
-          <label>Confirmar PIN</label>
-          <input id="nuPin2" class="inp" type="password" maxlength="4" inputmode="numeric" placeholder="••••"/>
-        </div>
-        <div class="err-msg" id="nuErr"></div>
-        <button class="btn btn-primary" style="width:100%;margin-top:var(--space-sm)" onclick="createUser()">Crear usuario</button>
+    <div class="new-user-form" id="newUserForm" style="display:none">
+      <div class="form-group" style="margin-bottom:var(--space-sm)">
+        <label>Nombre completo</label>
+        <input id="nuName" class="inp" placeholder="Ej: José López"/>
       </div>
-      <div class="max-users-msg" id="maxUsersMsg" style="display:none">Máximo 2 usuarios. Elimina uno para crear otro.</div>
+      <div class="form-group" style="margin-bottom:var(--space-sm)">
+        <label>Apodo (para iniciar sesión)</label>
+        <input id="nuNick" class="inp" placeholder="Ej: toño"/>
+      </div>
+      <div class="form-group" style="margin-bottom:var(--space-sm)">
+        <label>PIN de 4 dígitos</label>
+        <input id="nuPin" class="inp" type="password" maxlength="4" inputmode="numeric" placeholder="••••"/>
+      </div>
+      <div class="form-group" style="margin-bottom:var(--space-sm)">
+        <label>Confirmar PIN</label>
+        <input id="nuPin2" class="inp" type="password" maxlength="4" inputmode="numeric" placeholder="••••"/>
+      </div>
+      <div class="err-msg" id="nuErr"></div>
+      <button class="btn btn-primary" style="width:100%;margin-top:var(--space-sm)" onclick="createUser()">Crear cuenta</button>
+      <button class="btn btn-ghost" style="width:100%;margin-top:var(--space-sm)" onclick="backToOptions()">← Regresar</button>
     </div>
+    <div class="max-users-msg" id="maxUsersMsg" style="display:none">Máximo 2 usuarios. Elimina uno para crear otro.</div>
   </div>
 </div>
 
@@ -581,20 +596,23 @@ let activeUserId = null; // ID del usuario activo
 let _pinBuffer   = '';
 let _pinTarget   = null; // ID del usuario al que se le está pidiendo PIN
 
+// ── HASH PIN (seguridad simple) ───────────────────────────────────────────────
+async function hashPin(pin){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pin+'fcup_salt'));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('').slice(0,16);
+}
+
 // ── USUARIOS: sync con Firestore ─────────────────────────────────────────────
 async function syncUsersFromCloud(){
-  if(!window._loadFromFirestore) return;
+  if(!window._firestore) return;
   try{
     const snap = await window._fsGetDoc(window._fsDoc(window._firestore,'meta','users'));
     if(snap.exists()&&snap.data().list){
       const cloudUsers = JSON.parse(snap.data().list);
-      // Merge: combinar usuarios locales y de nube, sin duplicados
       const local = getUsers();
       const merged = [...cloudUsers];
-      for(const u of local){
-        if(!merged.find(x=>x.id===u.id)) merged.push(u);
-      }
-      saveUsers(merged);
+      for(const u of local){ if(!merged.find(x=>x.id===u.id)) merged.push(u); }
+      localStorage.setItem('fcup_users', JSON.stringify(merged));
     }
   }catch(e){ console.warn('syncUsers error:',e); }
 }
@@ -602,21 +620,13 @@ async function syncUsersFromCloud(){
 async function saveUsersToCloud(users){
   if(!window._fsSetDoc||!window._fsDoc||!window._firestore) return;
   try{
-    window._fsSetDoc(
-      window._fsDoc(window._firestore,'meta','users'),
-      {list: JSON.stringify(users)},
-      {merge:true}
-    );
+    window._fsSetDoc(window._fsDoc(window._firestore,'meta','users'),
+      {list: JSON.stringify(users)},{merge:true});
   }catch(e){ console.warn('saveUsers error:',e); }
 }
 
-function getUsers(){
-  try{return JSON.parse(localStorage.getItem('fcup_users')||'[]');}catch(e){return[];}
-}
-function saveUsers(users){
-  localStorage.setItem('fcup_users',JSON.stringify(users));
-  saveUsersToCloud(users);
-}
+function getUsers(){ try{return JSON.parse(localStorage.getItem('fcup_users')||'[]');}catch(e){return[];} }
+function saveUsers(users){ localStorage.setItem('fcup_users',JSON.stringify(users)); saveUsersToCloud(users); }
 function getBlockInfo(){
   try{return JSON.parse(localStorage.getItem('fcup_blocked')||'null');}catch(e){return null;}
 }
@@ -757,9 +767,9 @@ function toggleNewUser(){
   const f=document.getElementById('newUserForm');
   f.style.display=f.style.display==='none'?'block':'none';
 }
-function createUser(){
+async function createUser(){
   const name=document.getElementById('nuName').value.trim();
-  const nick=document.getElementById('nuNick').value.trim();
+  const nick=document.getElementById('nuNick').value.trim().toLowerCase();
   const pin =document.getElementById('nuPin').value.trim();
   const pin2=document.getElementById('nuPin2').value.trim();
   const errEl=document.getElementById('nuErr');
@@ -769,12 +779,14 @@ function createUser(){
   if(pin!==pin2){errEl.textContent='Los PINs no coinciden';return;}
   const users=getUsers();
   if(users.length>=MAX_USERS){errEl.textContent='Máximo 2 usuarios. Elimina uno primero.';return;}
+  if(users.find(u=>u.nick.toLowerCase()===nick)){errEl.textContent='Ese apodo ya existe';return;}
+  const pinHash = await hashPin(pin);
   const id='u'+Date.now();
-  users.push({id,name,nick,pin,db:{user:nick,currentYear:new Date().getFullYear(),currentMonth:new Date().getMonth(),data:{}}});
+  users.push({id,name,nick,pin,pinHash,db:{user:nick,currentYear:new Date().getFullYear(),currentMonth:new Date().getMonth(),data:{}}});
   saveUsers(users);
   ['nuName','nuNick','nuPin','nuPin2'].forEach(x=>document.getElementById(x).value='');
-  renderLoginScreen();
-  showMsg(`Usuario "${nick}" creado ✅`);
+  await renderLoginScreen();
+  showMsg(`¡Bienvenido ${nick}! ✅`);
 }
 function deleteUser(userId){
   const users=getUsers();
