@@ -26,7 +26,12 @@
   window._fsSetDoc    = setDoc;
   window._fsGetDoc    = getDoc;
   window._firebaseReady = true;
-  document.dispatchEvent(new Event('firebaseReady'));
+  // Esperar a que el DOM esté listo antes de disparar el evento
+  if(document.readyState === 'complete'){
+    document.dispatchEvent(new Event('firebaseReady'));
+  } else {
+    window.addEventListener('load', ()=>document.dispatchEvent(new Event('firebaseReady')));
+  }
 </script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet"/>
 <style>
