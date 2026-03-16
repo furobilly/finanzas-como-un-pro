@@ -784,7 +784,7 @@ async function loadUserSession(){
   showMsg('⏳ Sincronizando datos...');
 
   // Intentar cargar desde Firestore primero
-  const cloudDb = await loadFromFirestore(activeUserId);
+  const cloudDb = window._loadFromFirestore ? await window._loadFromFirestore(activeUserId) : null;
   if(cloudDb){
     db = cloudDb;
     // Actualizar localStorage con datos de la nube
@@ -813,7 +813,10 @@ async function loadUserSession(){
 
 function save(){
   if(!activeUserId)return;
-  saveUserDb(activeUserId,db);
+  // 1. Guardar en localStorage (respaldo offline inmediato)
+  try{ localStorage.setItem('fcup_db_'+activeUserId, JSON.stringify(db)); }catch(e){}
+  // 2. Guardar en Firestore (sincronización nube)
+  if(window._saveToFirestore) window._saveToFirestore(activeUserId, db);
 }
 
 function findPrevMonthData(){
