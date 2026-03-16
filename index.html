@@ -768,6 +768,17 @@ function switchUser(){
 // ══════════════════════════════════════════════════════
 let db={user:'',currentYear:new Date().getFullYear(),currentMonth:new Date().getMonth(),data:{}};
 
+async function waitForFirebase(ms=5000){
+  if(window._loadFromFirestore) return true;
+  return new Promise(resolve=>{
+    const t=Date.now();
+    const iv=setInterval(()=>{
+      if(window._loadFromFirestore){clearInterval(iv);resolve(true);}
+      else if(Date.now()-t>ms){clearInterval(iv);resolve(false);}
+    },100);
+  });
+}
+
 async function loadUserSession(){
   db={user:'',currentYear:new Date().getFullYear(),currentMonth:new Date().getMonth(),data:{}};
   const users=getUsers();
@@ -781,10 +792,13 @@ async function loadUserSession(){
   }
 
   // Mostrar indicador de carga
-  showMsg('⏳ Sincronizando datos...');
+  showMsg('⏳ Conectando con Firebase...');
+
+  // Esperar a que Firebase esté listo (máx 5 segundos)
+  const fbReady = await waitForFirebase();
 
   // Intentar cargar desde Firestore primero
-  const cloudDb = window._loadFromFirestore ? await window._loadFromFirestore(activeUserId) : null;
+  const cloudDb = fbReady && window._loadFromFirestore ? await window._loadFromFirestore(activeUserId) : null;
   if(cloudDb){
     db = cloudDb;
     // Actualizar localStorage con datos de la nube
