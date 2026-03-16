@@ -831,18 +831,37 @@ function findPrevMonthData(){
 }
 
 function getAllMasterServices(){
-  // Recopila TODOS los servicios únicos registrados en cualquier mes,
-  // usando siempre la versión más antigua (startYear/startMonth más temprano)
   const seen={};
-  // Recorre todos los meses ordenados de más antiguo a más reciente
   const keys=Object.keys(db.data).sort();
   for(const k of keys){
     const m=db.data[k];
-    for(const s of (m.services||[])){
-      if(!seen[s.id]) seen[s.id]=s;
-    }
+    for(const s of (m.services||[])){if(!seen[s.id])seen[s.id]=s;}
   }
   return Object.values(seen);
+}
+
+function getAllMasterCards(){
+  const seen={};
+  const keys=Object.keys(db.data).sort();
+  for(const k of keys){
+    const m=db.data[k];
+    for(const c of (m.cards||[])){if(!seen[c.id])seen[c.id]=c;}
+  }
+  return Object.values(seen);
+}
+
+function getAllMasterLoans(){
+  // Solo préstamos aún no completados
+  const seen={};
+  const keys=Object.keys(db.data).sort();
+  for(const k of keys){
+    const m=db.data[k];
+    for(const l of (m.loans||[])){
+      // Guardar siempre la versión más reciente (mayor progreso)
+      if(!seen[l.id]||l.done>seen[l.id].done) seen[l.id]=l;
+    }
+  }
+  return Object.values(seen).filter(l=>l.done<l.total);
 }
 
 function serviceApplies(s, destYear, destMonth){
@@ -862,20 +881,22 @@ function monthObj(){
   if(!db.data[k]){
     const prev=findPrevMonthData();
     const newM={income:[],expenses:[],services:[],cards:[],loans:[],payments:{},cardSettings:{},savings:{opening:0,goal:0,tx:[]}};
-    if(prev){
-      // SERVICIOS — siempre desde el catálogo maestro completo, nunca desde prev
+    if(prev||Object.keys(db.data).length>0){
+      // SERVICIOS — catálogo maestro completo
       const masterServices=getAllMasterServices();
       newM.services=masterServices
         .filter(s=>serviceApplies(s,db.currentYear,db.currentMonth))
         .map(s=>({...s}));
-      // TARJETAS — siempre, cardSettings vacío
-      newM.cards=(prev.cards||[]).map(c=>({...c}));
+      // TARJETAS — catálogo maestro, cardSettings vacío cada mes
+      newM.cards=getAllMasterCards().map(c=>({...c}));
       newM.cardSettings={};
-      // PRÉSTAMOS — solo incompletos
-      newM.loans=(prev.loans||[]).filter(l=>l.done<l.total).map(l=>({...l}));
-      // AHORROS — saldo final → opening
-      newM.savings.opening=balanceOf(prev.savings||{opening:0,tx:[]});
-      newM.savings.goal=prev.savings?.goal||0;
+      // PRÉSTAMOS — catálogo maestro, solo incompletos
+      newM.loans=getAllMasterLoans().map(l=>({...l}));
+      // AHORROS — saldo final del mes anterior → opening
+      if(prev){
+        newM.savings.opening=balanceOf(prev.savings||{opening:0,tx:[]});
+        newM.savings.goal=prev.savings?.goal||0;
+      }
     }
     db.data[k]=newM; save();
   }
