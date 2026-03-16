@@ -676,7 +676,7 @@ function updatePinDots(){
     if(el) el.className='pin-dot'+(i<_pinBuffer.length?' filled':'');
   }
 }
-function pinEnter(){
+async function pinEnter(){
   if(!_pinTarget){return;}
   const block=getBlockInfo();
   if(block&&block.userId===_pinTarget&&Date.now()<block.until) return;
@@ -689,9 +689,9 @@ function pinEnter(){
     // PIN correcto → entrar
     clearBlockInfo();
     activeUserId=_pinTarget;
-    loadUserSession();
     document.getElementById('loginScreen').style.display='none';
     document.getElementById('appScreen').style.display='block';
+    await loadUserSession();
   } else {
     // PIN incorrecto → bloquear
     _pinBuffer=''; updatePinDots();
@@ -768,12 +768,19 @@ async function loadUserSession(){
   const cloudDb = await loadFromFirestore(activeUserId);
   if(cloudDb){
     db = cloudDb;
+    // Actualizar localStorage con datos de la nube
+    try{ localStorage.setItem('fcup_db_'+activeUserId, JSON.stringify(db)); }catch(e){}
     showMsg('☁️ Datos sincronizados ✅');
   } else {
     // Fallback: cargar desde localStorage
     try{
       const local = localStorage.getItem('fcup_db_'+activeUserId);
       if(local) db = JSON.parse(local);
+      else {
+        // Intentar clave legacy
+        const legacy = localStorage.getItem('finanzasDB');
+        if(legacy) db = JSON.parse(legacy);
+      }
     }catch(e){}
     showMsg('📱 Datos locales cargados');
   }
