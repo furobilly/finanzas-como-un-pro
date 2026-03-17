@@ -468,7 +468,12 @@ tr:hover td{background:var(--bg-subtle)}
       <div class="form-group" style="max-width:130px"><label>Monto $</label><input id="svAmt" class="inp" type="number" min="0" placeholder="0.00"/><div class="err-msg" id="svAmtErr"></div></div>
       <div class="form-group" style="max-width:140px"><label>Frecuencia</label><select id="svFreq" class="inp"><option value="mensual">Mensual</option><option value="quincenal">Quincenal</option><option value="bimestral">Bimestral</option><option value="anual">Anual</option></select></div>
       <div class="form-group" style="max-width:100px"><label>Día pago</label><input id="svDay" class="inp" type="number" min="1" max="31" placeholder="1-31"/><div class="err-msg" id="svDayErr"></div></div>
-      <div class="form-group" style="max-width:110px;justify-content:flex-end"><button class="btn btn-primary" onclick="addService()">➕ Agregar</button></div>
+      <div class="form-group" style="max-width:140px;justify-content:flex-end;gap:6px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:.8rem;font-weight:600;color:var(--text-secondary);cursor:pointer">
+          <input type="checkbox" id="svFixed" style="width:16px;height:16px;accent-color:var(--primary)"/> Monto fijo
+        </label>
+        <button class="btn btn-primary" onclick="addService()">➕ Agregar</button>
+      </div>
     </div>
   </div>
   <div class="card"><div class="card-title">🔧 Servicios Registrados</div>
@@ -1102,10 +1107,11 @@ function monthObj(){
     const newM={income:[],expenses:[],services:[],cards:[],loans:[],payments:{},cardSettings:{},savings:{opening:0,goal:0,tx:[]}};
     if(prev||Object.keys(db.data).length>0){
       // SERVICIOS — catálogo maestro completo
+      // Si fixed:true → hereda monto original. Si fixed:false (variable) → amount=0 cada mes nuevo
       const masterServices=getAllMasterServices();
       newM.services=masterServices
         .filter(s=>serviceApplies(s,db.currentYear,db.currentMonth))
-        .map(s=>({...s}));
+        .map(s=>({...s, amount: s.fixed ? s.amount : 0}));
       // TARJETAS — catálogo maestro, cardSettings vacío cada mes
       newM.cards=getAllMasterCards().map(c=>({...c}));
       newM.cardSettings={};
@@ -1131,7 +1137,12 @@ function totals(){
   const m=monthObj();
   const cs=m.cardSettings||{};
   const inc=sum(m.income,'amount');
-  const fixSv=sum(m.services,'amount');
+  // Servicios: usar monto real pagado si existe, si no el estimado del catálogo
+  const fixSv=m.services.reduce((a,s)=>{
+    const p=m.payments['service-'+s.id];
+    const realAmt=(p&&typeof p==='object'&&p.amount!=null)?p.amount:s.amount;
+    return a+realAmt;
+  },0);
   const fixCards=m.cards.reduce((a,c)=>a+amountForCard(cs[c.id]||{mode:'min',min:0}),0);
   const fixLoans=m.loans.filter(l=>l.done<l.total).reduce((a,l)=>a+(l.freq==='quincenal'?l.amount*2:+l.amount),0);
   const fixed=fixSv+fixCards+fixLoans;
@@ -1203,12 +1214,21 @@ function drawUpcoming(){
     if(!arr.length){document.getElementById(id).innerHTML='<div class="empty-state">Sin pagos esta quincena</div>';return;}
     let pending=0;
     const rows=arr.map(p=>{
-      const done=m.payments[p.key]; if(!done)pending+=p.amt;
+      // Usar monto real pagado si existe, si no el estimado
+      const payInfo = m.payments[p.key];
+      const done = payInfo === true || (payInfo && payInfo.paid);
+      const realAmt = (payInfo && payInfo.amount != null) ? payInfo.amount : p.amt;
+      if(!done) pending += realAmt;
+      // Solo servicios son editables en monto (no tarjetas ni préstamos que tienen su propia lógica)
+      const canEdit = p.key.startsWith('service-');
       return`<div class="pay ${done?'done':''}">
         <input type="checkbox" ${done?'checked':''} onchange="togglePay('${p.key}',this.checked,'${p.name}',${p.amt})"/>
         <div class="pay-icon">${p.icon}</div>
         <div class="pay-info"><div class="pay-name">${p.name}</div><div class="pay-day">Día ${p.day}</div></div>
-        <div class="pay-amt">${money(p.amt)}</div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <div class="pay-amt" id="payamt-${p.key}">${money(realAmt)}</div>
+          ${canEdit?`<button onclick="editPayAmt('${p.key}',${p.amt})" style="background:none;border:none;cursor:pointer;font-size:.85rem;color:var(--text-secondary);padding:2px 4px;border-radius:4px" title="Editar monto de este mes">✏️</button>`:''}
+        </div>
       </div>`;
     }).join('');
     document.getElementById(id).innerHTML=rows+`<div class="q-total">Pendiente: <b>${money(pending)}</b></div>`;
@@ -1217,15 +1237,41 @@ function drawUpcoming(){
 
 function togglePay(key,checked,name,amt){
   const m=monthObj();
-  if(key.startsWith('card-')&&checked){
-    const real=prompt(`¿Cuánto pagaste en "${name}"?\n(Sugerido: ${money(amt)})`,amt);
-    if(real===null){refreshAll();return;}
-    const id=key.replace('card-','');
-    m.cardSettings[id]=m.cardSettings[id]||{mode:'min'};
-    m.cardSettings[id].actual=+real; m.cardSettings[id].paid=true;
+  const prev=m.payments[key];
+  const prevAmt=(prev&&typeof prev==='object'&&prev.amount!=null)?prev.amount:amt;
+  if(checked){
+    if(key.startsWith('card-')){
+      const real=prompt(`¿Cuánto pagaste en "${name}"?\n(Sugerido: ${money(prevAmt)})`,prevAmt);
+      if(real===null){refreshAll();return;}
+      const id=key.replace('card-','');
+      m.cardSettings[id]=m.cardSettings[id]||{mode:'min'};
+      m.cardSettings[id].actual=+real; m.cardSettings[id].paid=true;
+      m.payments[key]={paid:true,amount:+real,paidDate:today()};
+    } else {
+      m.payments[key]={paid:true,amount:prevAmt,paidDate:today()};
+    }
+  } else {
+    m.payments[key]=(prev&&typeof prev==='object'&&prev.amount!=null)
+      ?{paid:false,amount:prev.amount}:false;
   }
-  m.payments[key]=checked; save(); drawDashboard();
+  save(); drawDashboard();
 }
+
+function editPayAmt(key,defaultAmt){
+  const m=monthObj();
+  const prev=m.payments[key];
+  const current=(prev&&typeof prev==='object'&&prev.amount!=null)?prev.amount:defaultAmt;
+  const input=prompt('Monto para este mes $:',current);
+  if(input===null) return;
+  const val=+input;
+  if(isNaN(val)||val<0){showMsg('Monto inválido','err');return;}
+  m.payments[key]=(prev&&typeof prev==='object')?{...prev,amount:val}:{paid:false,amount:val};
+  const svcId=+key.replace('service-','');
+  const svc=m.services.find(s=>s.id===svcId);
+  if(svc) svc.amount=val;
+  save(); drawDashboard(); showMsg('Monto actualizado ✅');
+}
+
 
 function drawExpensesOnDashboard(){
   const m=monthObj();
@@ -1280,16 +1326,19 @@ function addService(){
   if(amt===''||amt===null){document.getElementById('svAmtErr').textContent='Ingresa un monto (puede ser $0)';document.getElementById('svAmt').classList.add('err');ok=false;}
   if(!day||+day<1||+day>31){document.getElementById('svDayErr').textContent='Día 1-31';document.getElementById('svDay').classList.add('err');ok=false;}
   if(!ok)return;
+  const isFixed=document.getElementById('svFixed')?.checked||false;
   const m=monthObj();
-  m.services.push({id:Date.now(),name,amount:+amt,freq,day:+day,icon:detectIcon(name),startYear:db.currentYear,startMonth:db.currentMonth});
-  save();refreshAll();['svName','svAmt','svDay'].forEach(id=>document.getElementById(id).value='');showMsg('Servicio agregado ✅');
+  m.services.push({id:Date.now(),name,amount:+amt,freq,day:+day,icon:detectIcon(name),startYear:db.currentYear,startMonth:db.currentMonth,fixed:isFixed});
+  save();refreshAll();['svName','svAmt','svDay'].forEach(id=>document.getElementById(id).value='');
+  if(document.getElementById('svFixed')) document.getElementById('svFixed').checked=false;
+  showMsg('Servicio agregado ✅');
 }
 function drawServices(){
   const m=monthObj(),tb=document.getElementById('servicesTbl');
   if(!m.services.length){tb.innerHTML=`<tr><td colspan="7" class="empty-state">Sin servicios</td></tr>`;return;}
-  tb.innerHTML=m.services.map(s=>`<tr><td style="font-size:1.3rem">${s.icon}</td><td>${s.name}</td><td class="money">${money(s.amount)}</td><td>${s.freq}</td><td>Día ${s.day}</td><td><span class="badge badge-q${qOf(s.day)==='Primera'?1:2}">${qOf(s.day)}</span></td><td><button class="btn btn-ghost btn-sm" onclick="editService(${s.id})">✏️</button> <button class="btn btn-danger btn-sm" onclick="delService(${s.id})">🗑</button></td></tr>`).join('');
+  tb.innerHTML=m.services.map(s=>`<tr><td style="font-size:1.3rem">${s.icon}</td><td>${s.name} ${s.fixed?'<span title="Monto fijo" style="font-size:.75rem;color:var(--text-secondary)">🔒</span>':'<span title="Monto variable" style="font-size:.75rem;color:var(--primary)">✏️</span>'}</td><td class="money">${money(s.amount)}</td><td>${s.freq}</td><td>Día ${s.day}</td><td><span class="badge badge-q${qOf(s.day)==='Primera'?1:2}">${qOf(s.day)}</span></td><td><button class="btn btn-ghost btn-sm" onclick="editService(${s.id})">✏️</button> <button class="btn btn-danger btn-sm" onclick="delService(${s.id})">🗑</button></td></tr>`).join('');
 }
-function editService(id){const item=monthObj().services.find(x=>x.id===id);if(!item)return;openModal('Editar Servicio',`<div class="form-group"><label>Nombre</label><input id="mName" class="inp" value="${item.name}"/></div><div class="form-group"><label>Monto $</label><input id="mAmt" class="inp" type="number" value="${item.amount}"/></div><div class="form-group"><label>Frecuencia</label><select id="mFreq" class="inp"><option value="mensual" ${item.freq==='mensual'?'selected':''}>Mensual</option><option value="quincenal" ${item.freq==='quincenal'?'selected':''}>Quincenal</option><option value="bimestral" ${item.freq==='bimestral'?'selected':''}>Bimestral</option><option value="anual" ${item.freq==='anual'?'selected':''}>Anual</option></select></div><div class="form-group"><label>Día</label><input id="mDay" class="inp" type="number" min="1" max="31" value="${item.day}"/></div>`,'service',id);}
+function editService(id){const item=monthObj().services.find(x=>x.id===id);if(!item)return;openModal('Editar Servicio',`<div class="form-group"><label>Nombre</label><input id="mName" class="inp" value="${item.name}"/></div><div class="form-group"><label>Monto $</label><input id="mAmt" class="inp" type="number" value="${item.amount}"/></div><div class="form-group"><label>Frecuencia</label><select id="mFreq" class="inp"><option value="mensual" ${item.freq==='mensual'?'selected':''}>Mensual</option><option value="quincenal" ${item.freq==='quincenal'?'selected':''}>Quincenal</option><option value="bimestral" ${item.freq==='bimestral'?'selected':''}>Bimestral</option><option value="anual" ${item.freq==='anual'?'selected':''}>Anual</option></select></div><div class="form-group"><label>Día</label><input id="mDay" class="inp" type="number" min="1" max="31" value="${item.day}"/></div><div class="form-group"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="mFixed" ${item.fixed?'checked':''} style="width:16px;height:16px;accent-color:var(--primary)"/> 🔒 Monto fijo (no cambia cada mes)</label></div>`,'service',id);}
 function delService(id){if(!confirm('¿Eliminar?'))return;const m=monthObj();m.services=m.services.filter(x=>x.id!==id);save();refreshAll();}
 
 // ══════════════════════════════════════════════════════
@@ -1445,7 +1494,7 @@ function closeModal(){document.getElementById('modalBg').classList.remove('open'
 function saveModal(){
   const m=monthObj();
   if(_mType==='income'){const x=m.income.find(i=>i.id===_mId);if(x){x.desc=document.getElementById('mDesc').value.trim();x.amount=+document.getElementById('mAmt').value;x.date=document.getElementById('mDate').value;}}
-  if(_mType==='service'){const x=m.services.find(s=>s.id===_mId);if(x){x.name=document.getElementById('mName').value.trim();x.amount=+document.getElementById('mAmt').value;x.freq=document.getElementById('mFreq').value;x.day=+document.getElementById('mDay').value;x.icon=detectIcon(x.name);}}
+  if(_mType==='service'){const x=m.services.find(s=>s.id===_mId);if(x){x.name=document.getElementById('mName').value.trim();x.amount=+document.getElementById('mAmt').value;x.freq=document.getElementById('mFreq').value;x.day=+document.getElementById('mDay').value;x.icon=detectIcon(x.name);x.fixed=document.getElementById('mFixed')?.checked||false;}}
   if(_mType==='card'){
     const alias=document.getElementById('mAlias').value.trim();
     const bank=document.getElementById('mBank').value.trim();
