@@ -654,38 +654,34 @@ function saveUserDb(userId,db){
 async function renderLoginScreen(){
   _pinBuffer='';
   _pinTarget=null;
-  document.getElementById('pinSection').style.display='none';
-  document.getElementById('pinError').textContent='';
   updatePinDots();
 
-  // Sincronizar usuarios desde la nube primero
+  // Pre-cargar tarjetas de usuario (para cuando el usuario pulse "Ya tengo cuenta")
   await syncUsersFromCloud();
-
   const users=getUsers();
   const list=document.getElementById('userCardsList');
-  if(!users.length){
-    list.innerHTML='<div class="empty-state" style="padding:var(--space-md)">No hay usuarios. Crea uno abajo.</div>';
-  } else {
-    list.innerHTML=users.map(u=>`
-      <div class="user-card" onclick="selectUser('${u.id}')">
-        <div class="user-avatar">${(u.nick||u.name||'?')[0].toUpperCase()}</div>
-        <div class="user-info">
-          <div class="user-name">${u.name}</div>
-          <div class="user-nick">@${u.nick}</div>
-        </div>
-        <button class="user-del" title="Eliminar usuario" onclick="event.stopPropagation();deleteUser('${u.id}')">🗑</button>
-      </div>`).join('');
-  }
+  list.innerHTML=users.map(u=>`
+    <div class="user-card" onclick="selectUser('${u.id}')">
+      <div class="user-avatar">${(u.nick||u.name||'?')[0].toUpperCase()}</div>
+      <div class="user-info">
+        <div class="user-name">${u.name}</div>
+        <div class="user-nick">@${u.nick}</div>
+      </div>
+      <button class="user-del" title="Eliminar usuario" onclick="event.stopPropagation();deleteUser('${u.id}')">🗑</button>
+    </div>`).join('');
 
-  // Botón crear nuevo usuario
-  const newToggle=document.getElementById('newUserToggle');
-  const maxMsg=document.getElementById('maxUsersMsg');
-  if(users.length>=MAX_USERS){
-    newToggle.style.display='none'; maxMsg.style.display='block';
-  } else {
-    newToggle.style.display='block'; maxMsg.style.display='none';
-  }
+  // Mostrar solo los botones principales; ocultar todo lo demás
+  document.getElementById('loginSub').textContent='¿Qué deseas hacer?';
+  document.getElementById('loginOptions').style.display='flex';
+  document.getElementById('userCardsList').style.display='none';
+  document.getElementById('findUserSection').style.display='none';
+  document.getElementById('pinSection').style.display='none';
+  document.getElementById('pinError').textContent='';
   document.getElementById('newUserForm').style.display='none';
+
+  // Controlar visibilidad del mensaje de máximo usuarios
+  const maxMsg=document.getElementById('maxUsersMsg');
+  if(maxMsg) maxMsg.style.display=users.length>=MAX_USERS?'block':'none';
 }
 
 function selectUser(userId){
@@ -747,8 +743,17 @@ async function pinEnter(){
   const u=users.find(x=>x.id===_pinTarget);
   if(!u){showMsg('Usuario no encontrado','err');return;}
 
-  if(_pinBuffer===u.pin){
-    // PIN correcto → entrar
+  // Comparar siempre con hash (más seguro). Soporte legacy para pins sin hash aún.
+  const inputHash = await hashPin(_pinBuffer);
+  const pinOk = u.pinHash ? (inputHash===u.pinHash) : (_pinBuffer===u.pin);
+
+  if(pinOk){
+    // PIN correcto → limpiar texto plano si aún existe, guardar solo hash
+    if(u.pin){
+      const allUsers=getUsers();
+      const idx=allUsers.findIndex(x=>x.id===_pinTarget);
+      if(idx>=0){ allUsers[idx].pin=''; allUsers[idx].pinHash=inputHash; saveUsers(allUsers); }
+    }
     clearBlockInfo();
     activeUserId=_pinTarget;
     document.getElementById('loginScreen').style.display='none';
@@ -761,6 +766,60 @@ async function pinEnter(){
     document.getElementById('pinError').textContent='PIN incorrecto. Bloqueado 60 segundos.';
     startBlockTimer(_pinTarget);
   }
+}
+
+// ── NAVEGACIÓN DEL LOGIN ──────────────────────────────────────────────────────
+function _loginShowOnly(sectionId){
+  ['loginOptions','userCardsList','findUserSection','pinSection','newUserForm'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el) el.style.display='none';
+  });
+  const target=document.getElementById(sectionId);
+  if(target) target.style.display='block';
+}
+
+function backToOptions(){
+  _pinBuffer=''; updatePinDots(); _pinTarget=null;
+  document.getElementById('pinError').textContent='';
+  document.getElementById('loginSub').textContent='¿Qué deseas hacer?';
+  document.getElementById('loginOptions').style.display='flex';
+  ['userCardsList','findUserSection','pinSection','newUserForm'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.style.display='none';
+  });
+}
+
+// Buscar cuenta por apodo — funciona en dispositivo nuevo sin localStorage
+async function findUser(){
+  const nick=document.getElementById('findNick').value.trim().toLowerCase();
+  const errEl=document.getElementById('findErr');
+  errEl.textContent='';
+  if(!nick){ errEl.textContent='Escribe tu apodo'; return; }
+  errEl.textContent='🔍 Buscando...';
+
+  // 1. Buscar en localStorage (dispositivo conocido)
+  const local=getUsers();
+  let found=local.find(u=>u.nick.toLowerCase()===nick);
+
+  // 2. Si no está local, buscar en Firestore
+  if(!found && window._firestore){
+    try{
+      await syncUsersFromCloud();
+      found=getUsers().find(u=>u.nick.toLowerCase()===nick);
+    }catch(e){ console.warn('findUser cloud error:',e); }
+  }
+
+  if(!found){
+    errEl.textContent='No se encontró ese apodo. ¿Es correcto?';
+    return;
+  }
+
+  errEl.textContent='';
+  _pinTarget=found.id;
+  _pinBuffer=''; updatePinDots();
+  document.getElementById('pinLabel').textContent=`PIN para @${found.nick}`;
+  document.getElementById('pinError').textContent='';
+  document.getElementById('loginSub').textContent=`Hola, ${found.name} 👋`;
+  _loginShowOnly('pinSection');
 }
 
 function toggleNewUser(){
@@ -782,7 +841,7 @@ async function createUser(){
   if(users.find(u=>u.nick.toLowerCase()===nick)){errEl.textContent='Ese apodo ya existe';return;}
   const pinHash = await hashPin(pin);
   const id='u'+Date.now();
-  users.push({id,name,nick,pin,pinHash,db:{user:nick,currentYear:new Date().getFullYear(),currentMonth:new Date().getMonth(),data:{}}});
+  users.push({id,name,nick,pin:'',pinHash,db:{user:nick,currentYear:new Date().getFullYear(),currentMonth:new Date().getMonth(),data:{}}});
   saveUsers(users);
   ['nuName','nuNick','nuPin','nuPin2'].forEach(x=>document.getElementById(x).value='');
   await renderLoginScreen();
@@ -1281,6 +1340,28 @@ document.getElementById('modalBg').addEventListener('click',e=>{if(e.target===do
 //  START
 // ══════════════════════════════════════════════════════
 renderLoginScreen();
+
+// ── Botones del login (btnYaTengo / btnSoyNuevo) ──────────────────────────
+document.getElementById('btnYaTengo').addEventListener('click',()=>{
+  const users=getUsers();
+  document.getElementById('loginOptions').style.display='none';
+  if(users.length){
+    // Dispositivo conocido: mostrar usuarios locales
+    document.getElementById('userCardsList').style.display='flex';
+    document.getElementById('userCardsList').style.flexDirection='column';
+    document.getElementById('loginSub').textContent='Selecciona tu usuario';
+  } else {
+    // Dispositivo nuevo: buscar cuenta por apodo en la nube
+    document.getElementById('findUserSection').style.display='block';
+    document.getElementById('loginSub').textContent='Busca tu cuenta por apodo';
+  }
+});
+document.getElementById('btnSoyNuevo').addEventListener('click',()=>{
+  document.getElementById('loginOptions').style.display='none';
+  document.getElementById('newUserForm').style.display='block';
+  document.getElementById('loginSub').textContent='Crea tu cuenta';
+});
+
 // Enter en PIN con teclado físico
 document.addEventListener('keydown',e=>{
   const pin=document.getElementById('pinSection');
