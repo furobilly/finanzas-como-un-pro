@@ -959,11 +959,13 @@ function getAllMasterServices(){
 }
 
 function getAllMasterCards(){
+  // Toma siempre la versión MÁS RECIENTE de cada tarjeta (igual que loans)
+  // para que editar en un mes reciente se propague hacia adelante
   const seen={};
   const keys=Object.keys(db.data).sort();
   for(const k of keys){
     const m=db.data[k];
-    for(const c of (m.cards||[])){if(!seen[c.id])seen[c.id]=c;}
+    for(const card of (m.cards||[])){ seen[card.id]=card; } // sobreescribe → queda la más reciente
   }
   return Object.values(seen);
 }
@@ -1008,6 +1010,11 @@ function monthObj(){
       // TARJETAS — catálogo maestro, cardSettings vacío cada mes
       newM.cards=getAllMasterCards().map(c=>({...c}));
       newM.cardSettings={};
+      // Si el mes ya existía pero sin tarjetas (bug: se creó vacío antes de que hubiera datos),
+      // re-sincronizar tarjetas desde el maestro
+      if(db.data[k]&&!db.data[k].cards?.length&&newM.cards.length){
+        db.data[k].cards=newM.cards;
+      }
       // PRÉSTAMOS — catálogo maestro, solo incompletos
       newM.loans=getAllMasterLoans().map(l=>({...l}));
       // AHORROS — saldo final del mes anterior → opening
@@ -1205,7 +1212,18 @@ function drawCards(){
 }
 function saveCardSettings(id){save();showMsg('Guardado ✅');drawDashboard();}
 function editCard(id){const c=monthObj().cards.find(x=>x.id===id);if(!c)return;openModal('Editar Tarjeta',`<div class="form-group"><label>Alias</label><input id="mAlias" class="inp" value="${c.alias}"/></div><div class="form-group"><label>Banco</label><input id="mBank" class="inp" value="${c.bank}"/></div><div class="form-group"><label>Últimos 4</label><input id="mLast4" class="inp" maxlength="4" value="${c.last4||''}"/></div><div class="form-group"><label>Límite $</label><input id="mLimit" class="inp" type="number" value="${c.limit}"/></div><div class="form-group"><label>Día corte</label><input id="mCut" class="inp" type="number" min="1" max="31" value="${c.cutDay}"/></div><div class="form-group"><label>Día pago</label><input id="mPayDay" class="inp" type="number" min="1" max="31" value="${c.payDay}"/></div>`,'card',id);}
-function delCard(id){if(!confirm('¿Eliminar?'))return;const m=monthObj();m.cards=m.cards.filter(x=>x.id!==id);save();refreshAll();}
+function delCard(id){
+  if(!confirm('¿Eliminar tarjeta? Se quitará de todos los meses.'))return;
+  // Guardar en historial antes de borrar
+  const cardRef=monthObj().cards.find(x=>x.id===id);
+  if(cardRef){
+    if(!db.deletedCards) db.deletedCards=[];
+    db.deletedCards.push({...cardRef, deletedAt:new Date().toISOString()});
+  }
+  // Eliminar de TODOS los meses
+  Object.values(db.data).forEach(m=>{ m.cards=(m.cards||[]).filter(x=>x.id!==id); delete (m.cardSettings||{})[id]; });
+  save();refreshAll();showMsg('Tarjeta eliminada de todos los meses ✅');
+}
 
 // ══════════════════════════════════════════════════════
 //  PRÉSTAMOS
@@ -1329,7 +1347,19 @@ function saveModal(){
   const m=monthObj();
   if(_mType==='income'){const x=m.income.find(i=>i.id===_mId);if(x){x.desc=document.getElementById('mDesc').value.trim();x.amount=+document.getElementById('mAmt').value;x.date=document.getElementById('mDate').value;}}
   if(_mType==='service'){const x=m.services.find(s=>s.id===_mId);if(x){x.name=document.getElementById('mName').value.trim();x.amount=+document.getElementById('mAmt').value;x.freq=document.getElementById('mFreq').value;x.day=+document.getElementById('mDay').value;x.icon=detectIcon(x.name);}}
-  if(_mType==='card'){const x=m.cards.find(c=>c.id===_mId);if(x){x.alias=document.getElementById('mAlias').value.trim();x.bank=document.getElementById('mBank').value.trim();x.last4=document.getElementById('mLast4').value.trim();x.limit=+document.getElementById('mLimit').value;x.cutDay=+document.getElementById('mCut').value;x.payDay=+document.getElementById('mPayDay').value;}}
+  if(_mType==='card'){
+    const alias=document.getElementById('mAlias').value.trim();
+    const bank=document.getElementById('mBank').value.trim();
+    const last4=document.getElementById('mLast4').value.trim();
+    const limit=+document.getElementById('mLimit').value;
+    const cutDay=+document.getElementById('mCut').value;
+    const payDay=+document.getElementById('mPayDay').value;
+    // Propagar a TODOS los meses (la tarjeta es la misma siempre)
+    Object.values(db.data).forEach(mo=>{
+      const x=(mo.cards||[]).find(card=>card.id===_mId);
+      if(x){x.alias=alias;x.bank=bank;x.last4=last4;x.limit=limit;x.cutDay=cutDay;x.payDay=payDay;}
+    });
+  }
   if(_mType==='loan'){const x=m.loans.find(l=>l.id===_mId);if(x){x.desc=document.getElementById('mDesc').value.trim();x.amount=+document.getElementById('mAmt').value;x.freq=document.getElementById('mFreq').value;x.day1=+document.getElementById('mDay1').value;x.day=x.day1;if(x.freq==='quincenal'&&document.getElementById('mDay2'))x.day2=+document.getElementById('mDay2').value;x.total=+document.getElementById('mTotal').value;x.done=+document.getElementById('mDone').value;}}
   if(_mType==='expense'){const x=m.expenses.find(e=>e.id===_mId);if(x){x.desc=document.getElementById('mDesc').value.trim();x.amount=+document.getElementById('mAmt').value;x.cat=document.getElementById('mCat').value;x.date=document.getElementById('mDate').value;}}
   save();refreshAll();closeModal();showMsg('Guardado ✅');
