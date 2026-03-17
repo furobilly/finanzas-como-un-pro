@@ -48,22 +48,43 @@
 
   // Buscar usuario por apodo directamente en la colección 'usuarios'
   window._findUserByNick = async (nick) => {
+    const nickLower = nick.toLowerCase().trim();
     try{
       const col = collection(firestore, 'usuarios');
       const snap = await getDocs(col);
       for(const docSnap of snap.docs){
         const data = docSnap.data();
-        // Buscar nick en el campo guardado, o dentro del campo db
-        if(data.nick && data.nick.toLowerCase() === nick.toLowerCase()) {
-          const db = data.db ? JSON.parse(data.db) : null;
-          return { id: docSnap.id, nick, db };
+
+        // Nivel A: campo nick directo en el documento
+        if(data.nick && data.nick.toLowerCase() === nickLower){
+          const parsed = data.db ? JSON.parse(data.db) : null;
+          return { id: docSnap.id, nick: data.nick, db: parsed };
         }
-        // Fallback: buscar dentro del JSON de db
+
+        // Nivel B: dentro del JSON de db → campo user
         if(data.db){
           try{
             const parsed = JSON.parse(data.db);
-            if(parsed.user && parsed.user.toLowerCase() === nick.toLowerCase()){
+            if(parsed.user && parsed.user.toLowerCase() === nickLower){
               return { id: docSnap.id, nick: parsed.user, db: parsed };
+            }
+          }catch(e){}
+        }
+
+        // Nivel C: buscar nick dentro del JSON completo como string
+        // (cubre casos donde user:'' pero el nick aparece como valor en algún campo)
+        if(data.db){
+          try{
+            const raw = data.db;
+            // Buscar patrones comunes donde se guardó el nick
+            const patterns = [
+              `"user":"${nickLower}"`,
+              `"nick":"${nickLower}"`,
+              `"name":"${nickLower}"`,
+            ];
+            if(patterns.some(p => raw.toLowerCase().includes(p))){
+              const parsed = JSON.parse(raw);
+              return { id: docSnap.id, nick: nickLower, db: parsed };
             }
           }catch(e){}
         }
@@ -975,6 +996,8 @@ async function loadUserSession(){
   const cloudDb = fbReady && window._loadFromFirestore ? await window._loadFromFirestore(activeUserId) : null;
   if(cloudDb){
     db = cloudDb;
+    // Asegurar que db.user siempre tenga el nick (puede venir vacío desde la nube)
+    if(!db.user && u?.nick) db.user = u.nick;
     // Actualizar localStorage con datos de la nube
     try{ localStorage.setItem('fcup_db_'+activeUserId, JSON.stringify(db)); }catch(e){}
     showMsg('☁️ Datos sincronizados ✅');
@@ -997,15 +1020,19 @@ async function loadUserSession(){
   ['inDate','exDate','savDate'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=today();});
   goTo('dash',document.querySelectorAll('.tab')[0]);
   refreshAll();
+  // Forzar save() para que el nick quede escrito en Firestore (repara usuarios viejos con user:'')
+  save();
 }
 
 function save(){
   if(!activeUserId)return;
-  // 1. Guardar en localStorage (respaldo offline inmediato)
-  try{ localStorage.setItem('fcup_db_'+activeUserId, JSON.stringify(db)); }catch(e){}
-  // 2. Guardar en Firestore — incluir nick como índice de búsqueda
+  // Asegurar que db.user siempre tenga el nick (índice de búsqueda en Firestore)
   const users=getUsers();
   const u=users.find(x=>x.id===activeUserId);
+  if(u?.nick && !db.user) db.user = u.nick;
+  // 1. Guardar en localStorage (respaldo offline inmediato)
+  try{ localStorage.setItem('fcup_db_'+activeUserId, JSON.stringify(db)); }catch(e){}
+  // 2. Guardar en Firestore — campo nick en el documento + dentro de db.user
   if(window._saveToFirestore) window._saveToFirestore(activeUserId, db, u?.nick||'');
 }
 
