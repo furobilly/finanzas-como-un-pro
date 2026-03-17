@@ -289,6 +289,16 @@ tr:hover td{background:var(--bg-subtle)}
 .modal-title{font-size:1.1rem;font-weight:800;margin-bottom:var(--space-md)}
 .modal-footer{display:flex;gap:var(--space-sm);justify-content:flex-end;margin-top:var(--space-md)}
 
+/* PROOF MODAL */
+#proofModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:400;align-items:center;justify-content:center;padding:var(--space-md)}
+#proofModal.open{display:flex}
+.proof-box{background:var(--surface);border-radius:var(--radius-lg);padding:var(--space-lg);width:100%;max-width:520px;max-height:92vh;overflow-y:auto;box-shadow:var(--shadow-xl);animation:fadeIn .25s ease}
+.proof-title{font-size:1rem;font-weight:800;margin-bottom:var(--space-md);display:flex;justify-content:space-between;align-items:center}
+.proof-preview{width:100%;max-height:340px;object-fit:contain;border-radius:var(--radius-md);border:1px solid var(--border);margin-bottom:var(--space-md);background:var(--bg-subtle)}
+.proof-drop{border:2px dashed var(--border);border-radius:var(--radius-md);padding:var(--space-xl);text-align:center;cursor:pointer;transition:var(--tr-normal);margin-bottom:var(--space-md)}
+.proof-drop:hover{border-color:var(--primary);background:var(--primary-light)}
+.proof-drop input{display:none}
+
 /* TOAST */
 #toast{position:fixed;bottom:24px;right:24px;background:var(--text-primary);color:#fff;padding:10px 20px;border-radius:var(--radius-md);font-size:.85rem;font-weight:600;z-index:300;opacity:0;transform:translateX(40px);transition:all .3s ease;pointer-events:none}
 #toast.show{opacity:1;transform:translateX(0)}
@@ -541,7 +551,25 @@ tr:hover td{background:var(--bg-subtle)}
         <div class="card-title">🐷 Saldo Actual</div>
         <div id="savBalance" style="font-family:'JetBrains Mono',monospace;font-size:1.8rem;font-weight:700;background:linear-gradient(135deg,var(--savings-color),#7c3aed);-webkit-background-clip:text;-webkit-text-fill-color:transparent">$0.00</div>
         <hr class="sep"/>
-        <div class="form-group"><label>Meta quincenal $</label><input id="savGoal" class="inp" type="number" min="0" placeholder="0.00" oninput="updateGoal()"/></div>
+        <div class="card-title" style="margin-top:var(--space-sm)">🎯 Mi Meta de Ahorro</div>
+        <div class="form-group" style="margin-bottom:var(--space-sm)">
+          <label>¿Para qué estás ahorrando?</label>
+          <input id="savGoalName" class="inp" placeholder="Ej: Celular nuevo, Vacaciones..." oninput="updateSavGoal()"/>
+        </div>
+        <div class="form-group" style="margin-bottom:var(--space-sm)">
+          <label>Monto objetivo $</label>
+          <input id="savGoalAmt" class="inp" type="number" min="0" placeholder="0.00" oninput="updateSavGoal()"/>
+        </div>
+        <div id="savGoalProgress" style="display:none;margin-top:var(--space-sm)">
+          <div style="display:flex;justify-content:space-between;font-size:.8rem;margin-bottom:4px">
+            <span id="savGoalLabel" style="font-weight:600;color:var(--savings-color)"></span>
+            <span id="savGoalPct" style="font-weight:700"></span>
+          </div>
+          <div class="progress-wrap" style="height:10px">
+            <div class="progress-fill" id="savGoalBar" style="background:linear-gradient(to right,var(--savings-color),#7c3aed)"></div>
+          </div>
+          <div id="savGoalRemaining" style="font-size:.78rem;color:var(--text-secondary);margin-top:4px"></div>
+        </div>
       </div>
       <div class="card"><div class="card-title">➕ Registrar Movimiento</div>
         <div class="form-row">
@@ -585,6 +613,22 @@ tr:hover td{background:var(--bg-subtle)}
 <div class="ver-footer">v3.0</div>
 </div><!-- .wrap -->
 </div><!-- #appScreen -->
+
+<!-- PROOF MODAL -->
+<div id="proofModal">
+  <div class="proof-box">
+    <div class="proof-title">
+      <span id="proofTitle">Comprobante</span>
+      <button onclick="closeProof()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-secondary)">✕</button>
+    </div>
+    <div id="proofContent"></div>
+    <div style="display:flex;gap:var(--space-sm);justify-content:flex-end;margin-top:var(--space-md)">
+      <button class="btn btn-ghost" onclick="closeProof()">Cerrar</button>
+      <button class="btn btn-danger btn-sm" id="proofDelBtn" style="display:none" onclick="deleteProof()">🗑 Eliminar</button>
+      <a id="proofDownloadBtn" style="display:none" class="btn btn-primary btn-sm" download="comprobante">⬇ Descargar</a>
+    </div>
+  </div>
+</div>
 
 <!-- MODAL -->
 <div class="modal-bg" id="modalBg">
@@ -1221,6 +1265,7 @@ function drawUpcoming(){
       if(!done) pending += realAmt;
       // Solo servicios son editables en monto (no tarjetas ni préstamos que tienen su propia lógica)
       const canEdit = p.key.startsWith('service-');
+      const hasProof = payInfo && typeof payInfo==='object' && payInfo.proof;
       return`<div class="pay ${done?'done':''}">
         <input type="checkbox" ${done?'checked':''} onchange="togglePay('${p.key}',this.checked,'${p.name}',${p.amt})"/>
         <div class="pay-icon">${p.icon}</div>
@@ -1228,6 +1273,7 @@ function drawUpcoming(){
         <div style="display:flex;align-items:center;gap:6px">
           <div class="pay-amt" id="payamt-${p.key}">${money(realAmt)}</div>
           ${canEdit?`<button onclick="editPayAmt('${p.key}',${p.amt})" style="background:none;border:none;cursor:pointer;font-size:.85rem;color:var(--text-secondary);padding:2px 4px;border-radius:4px" title="Editar monto de este mes">✏️</button>`:''}
+          <button onclick="openProof('${p.key}','${p.name}')" style="background:none;border:none;cursor:pointer;font-size:.9rem;padding:2px 4px;border-radius:4px;color:${hasProof?'var(--success)':'var(--text-secondary)'}" title="${hasProof?'Ver comprobante':'Agregar comprobante'}">${hasProof?'📎✅':'📎'}</button>
         </div>
       </div>`;
     }).join('');
@@ -1431,7 +1477,26 @@ function delExpense(id){if(!confirm('¿Eliminar?'))return;const m=monthObj();m.e
 // ══════════════════════════════════════════════════════
 //  AHORROS
 // ══════════════════════════════════════════════════════
-function updateGoal(){const m=monthObj();m.savings.goal=+document.getElementById('savGoal').value||0;save();}
+function updateSavGoal(){
+  const m=monthObj();
+  m.savings.goalName=document.getElementById('savGoalName').value.trim();
+  m.savings.goalAmt=+document.getElementById('savGoalAmt').value||0;
+  save(); drawSavGoalProgress();
+}
+function drawSavGoalProgress(){
+  const m=monthObj(), bal=balanceOf(m.savings);
+  const name=m.savings.goalName||'', target=+(m.savings.goalAmt||0);
+  const progEl=document.getElementById('savGoalProgress');
+  if(!name&&!target){progEl.style.display='none';return;}
+  progEl.style.display='block';
+  const pct=target>0?Math.min(100,Math.round((bal/target)*100)):0;
+  const remaining=Math.max(0,target-bal);
+  document.getElementById('savGoalLabel').textContent=name||'Mi meta';
+  document.getElementById('savGoalPct').textContent=pct+'%';
+  document.getElementById('savGoalBar').style.width=pct+'%';
+  document.getElementById('savGoalRemaining').textContent=
+    remaining>0?`Faltan ${money(remaining)} para llegar a ${money(target)}`:`🎉 ¡Meta alcanzada!`;
+}
 function addSavTx(sign){
   const desc=document.getElementById('savDesc').value.trim()||'Movimiento';
   const amt =+document.getElementById('savAmt').value;
@@ -1453,7 +1518,9 @@ function applyInterest(){
 function drawSavings(){
   const m=monthObj(),bal=balanceOf(m.savings);
   document.getElementById('savBalance').textContent=money(bal);
-  document.getElementById('savGoal').value=m.savings.goal||'';
+  document.getElementById('savGoalName').value=m.savings.goalName||'';
+  document.getElementById('savGoalAmt').value=m.savings.goalAmt||'';
+  drawSavGoalProgress();
   const tb=document.getElementById('savTbl');
   if(!m.savings.tx.length){tb.innerHTML=`<tr><td colspan="5" class="empty-state">Sin movimientos</td></tr>`;}
   else{let run=+(m.savings.opening||0);tb.innerHTML=[...m.savings.tx].sort((a,b)=>a.date.localeCompare(b.date)).map(t=>{run+=+t.amount;return`<tr><td>${fmtDate(t.date)}</td><td>${t.desc}</td><td class="money" style="color:${+t.amount>=0?'var(--success)':'var(--danger)'}">${+t.amount>=0?'+':''}${money(t.amount)}</td><td class="money">${money(run)}</td><td><button class="btn btn-danger btn-sm" onclick="delSavTx(${t.id})">🗑</button></td></tr>`;}).join('');}
@@ -1464,8 +1531,8 @@ function drawProjection(){
   document.getElementById('projMonths').textContent=months;
   const rate=(+document.getElementById('savRate').value||0)/100/12;
   document.getElementById('rateMonthly').textContent=((rate*100).toFixed(2));
-  const m=monthObj(),goal=+(m.savings.goal||0);let saldo=balanceOf(m.savings);
-  const bars=[];for(let i=1;i<=months;i++){saldo+=goal*2;saldo+=saldo*rate;bars.push({label:'M'+i,val:saldo});}
+  let saldo=balanceOf(m.savings);
+  const bars=[];for(let i=1;i<=months;i++){saldo+=saldo*rate;bars.push({label:'M'+i,val:saldo});}
   const max=Math.max(...bars.map(b=>b.val),1);
   document.getElementById('projChart').innerHTML=`<div class="proj-bars">${bars.map(b=>`<div class="proj-bar-wrap"><div class="proj-bar" style="height:${Math.max(10,(b.val/max)*100)}px"><div class="proj-bar-val">${money(b.val)}</div></div><div class="proj-bar-lbl">${b.label}</div></div>`).join('')}</div>`;
 }
@@ -1484,6 +1551,136 @@ function drawReports(){
     ? Object.entries(totByCat).sort((a,b)=>b[1]-a[1]).map(([cat,v])=>`<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)"><span>${CATS[cat]||cat}</span><span><b class="money">${money(v)}</b> <span style="color:var(--text-secondary);font-size:.8rem">(${((v/total)*100).toFixed(1)}%)</span></span></div>`).join('')
     : '<div class="empty-state">Sin gastos variables este mes</div>';
 }
+
+// ══════════════════════════════════════════════════════
+//  COMPROBANTES
+// ══════════════════════════════════════════════════════
+let _proofKey = '';
+
+function openProof(key, name){
+  _proofKey = key;
+  const m = monthObj();
+  const payInfo = m.payments[key];
+  const proof = payInfo && typeof payInfo==='object' ? payInfo.proof : null;
+  document.getElementById('proofTitle').textContent = '📎 Comprobante — ' + name;
+  const content = document.getElementById('proofContent');
+  const delBtn = document.getElementById('proofDelBtn');
+  const dlBtn = document.getElementById('proofDownloadBtn');
+
+  if(proof){
+    // Mostrar comprobante existente
+    const isPdf = proof.startsWith('data:application/pdf');
+    if(isPdf){
+      content.innerHTML = `<div style="text-align:center;padding:var(--space-lg)">
+        <div style="font-size:3rem">📄</div>
+        <div style="font-size:.9rem;margin-top:8px;color:var(--text-secondary)">Comprobante PDF guardado</div>
+      </div>`;
+      dlBtn.href = proof; dlBtn.download = 'comprobante.pdf';
+    } else {
+      content.innerHTML = `<img src="${proof}" class="proof-preview" alt="Comprobante"/>`;
+      dlBtn.href = proof; dlBtn.download = 'comprobante.jpg';
+    }
+    delBtn.style.display = 'inline-flex';
+    dlBtn.style.display = 'inline-flex';
+  } else {
+    // Mostrar zona de carga
+    content.innerHTML = `
+      <div class="proof-drop" onclick="document.getElementById('proofFileIn').click()">
+        <input type="file" id="proofFileIn" accept="image/*,application/pdf" onchange="handleProofFile(event)"/>
+        <div style="font-size:2.5rem">📎</div>
+        <div style="font-weight:700;margin:8px 0 4px">Toca para subir comprobante</div>
+        <div style="font-size:.8rem;color:var(--text-secondary)">Imagen (JPG, PNG) o PDF • Se comprime automáticamente</div>
+      </div>`;
+    delBtn.style.display = 'none';
+    dlBtn.style.display = 'none';
+  }
+  document.getElementById('proofModal').classList.add('open');
+}
+
+function handleProofFile(e){
+  const file = e.target.files[0];
+  if(!file) return;
+  const maxMB = 4;
+  if(file.size > maxMB * 1024 * 1024){ showMsg('Archivo muy grande (máx 4 MB)','err'); return; }
+
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const data = ev.target.result;
+    const isPdf = file.type === 'application/pdf';
+    if(isPdf){
+      saveProof(data, 'pdf');
+    } else {
+      // Comprimir imagen antes de guardar
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX = 1200;
+        let w = img.width, h = img.height;
+        if(w > MAX){ h = Math.round(h * MAX / w); w = MAX; }
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        const compressed = canvas.toDataURL('image/jpeg', 0.75);
+        saveProof(compressed, 'img');
+      };
+      img.src = data;
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+function saveProof(data, type){
+  const m = monthObj();
+  if(!m.payments[_proofKey] || typeof m.payments[_proofKey] !== 'object'){
+    m.payments[_proofKey] = {paid: m.payments[_proofKey]===true, amount: null};
+  }
+  m.payments[_proofKey].proof = data;
+  m.payments[_proofKey].proofType = type;
+  m.payments[_proofKey].proofDate = today();
+  // Auto-borrar comprobantes de más de 6 meses (al guardar, revisar toda la db)
+  cleanOldProofs();
+  save(); closeProof(); drawDashboard();
+  showMsg('Comprobante guardado ✅');
+}
+
+function deleteProof(){
+  if(!confirm('¿Eliminar este comprobante?')) return;
+  const m = monthObj();
+  if(m.payments[_proofKey] && typeof m.payments[_proofKey]==='object'){
+    delete m.payments[_proofKey].proof;
+    delete m.payments[_proofKey].proofType;
+    delete m.payments[_proofKey].proofDate;
+  }
+  save(); closeProof(); drawDashboard();
+  showMsg('Comprobante eliminado');
+}
+
+function closeProof(){
+  document.getElementById('proofModal').classList.remove('open');
+  _proofKey = '';
+}
+
+function cleanOldProofs(){
+  // Borrar comprobantes de meses con más de 6 meses de antigüedad
+  const now = new Date();
+  Object.keys(db.data).forEach(k => {
+    const [y, m] = k.split('-').map(Number);
+    const monthAge = (now.getFullYear() - y) * 12 + (now.getMonth() + 1 - m);
+    if(monthAge > 6){
+      const monthData = db.data[k];
+      Object.keys(monthData.payments || {}).forEach(pk => {
+        const p = monthData.payments[pk];
+        if(p && typeof p === 'object' && p.proof){
+          delete p.proof; delete p.proofType; delete p.proofDate;
+        }
+      });
+    }
+  });
+}
+
+// Cerrar proof modal al click fuera
+document.getElementById('proofModal').addEventListener('click', e => {
+  if(e.target === document.getElementById('proofModal')) closeProof();
+});
 
 // ══════════════════════════════════════════════════════
 //  MODAL
