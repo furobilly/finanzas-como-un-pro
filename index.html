@@ -6,7 +6,7 @@
 <title>Finanzas Como Un Pro</title>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-app.js";
-  import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-firestore.js";
+  import { getFirestore, doc, setDoc, getDoc, getDocs, collection } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-firestore.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAAE1Jm-KPAdHxNC3tdSx_VO7uIxb5e72k",
@@ -36,12 +36,40 @@
     return null;
   };
 
-  window._saveToFirestore = (userId, db) => {
+  window._saveToFirestore = (userId, db, nick) => {
     try{
       const ref = doc(firestore, 'usuarios', userId);
-      setDoc(ref, { db: JSON.stringify(db) }, { merge: true })
+      const payload = { db: JSON.stringify(db) };
+      if(nick) payload.nick = nick; // índice para búsqueda por apodo
+      setDoc(ref, payload, { merge: true })
         .catch(e => console.warn('Firestore save error:', e));
     }catch(e){}
+  };
+
+  // Buscar usuario por apodo directamente en la colección 'usuarios'
+  window._findUserByNick = async (nick) => {
+    try{
+      const col = collection(firestore, 'usuarios');
+      const snap = await getDocs(col);
+      for(const docSnap of snap.docs){
+        const data = docSnap.data();
+        // Buscar nick en el campo guardado, o dentro del campo db
+        if(data.nick && data.nick.toLowerCase() === nick.toLowerCase()) {
+          const db = data.db ? JSON.parse(data.db) : null;
+          return { id: docSnap.id, nick, db };
+        }
+        // Fallback: buscar dentro del JSON de db
+        if(data.db){
+          try{
+            const parsed = JSON.parse(data.db);
+            if(parsed.user && parsed.user.toLowerCase() === nick.toLowerCase()){
+              return { id: docSnap.id, nick: parsed.user, db: parsed };
+            }
+          }catch(e){}
+        }
+      }
+    }catch(e){ console.warn('findUserByNick error:', e); }
+    return null;
   };
 
   window._firebaseReady = true;
@@ -743,6 +771,22 @@ async function pinEnter(){
   const u=users.find(x=>x.id===_pinTarget);
   if(!u){showMsg('Usuario no encontrado','err');return;}
 
+  // Caso especial: usuario encontrado en nube sin PIN local (nuevo dispositivo)
+  if(u.needsPinReset){
+    if(_pinBuffer.length<4){ showMsg('El PIN debe tener 4 dígitos','err'); _pinBuffer=''; updatePinDots(); return; }
+    const newHash = await hashPin(_pinBuffer);
+    const allUsers=getUsers();
+    const idx=allUsers.findIndex(x=>x.id===_pinTarget);
+    if(idx>=0){ allUsers[idx].pinHash=newHash; allUsers[idx].pin=''; delete allUsers[idx].needsPinReset; saveUsers(allUsers); }
+    showMsg('PIN configurado ✅');
+    clearBlockInfo();
+    activeUserId=_pinTarget;
+    document.getElementById('loginScreen').style.display='none';
+    document.getElementById('appScreen').style.display='block';
+    await loadUserSession();
+    return;
+  }
+
   // Comparar siempre con hash (más seguro). Soporte legacy para pins sin hash aún.
   const inputHash = await hashPin(_pinBuffer);
   const pinOk = u.pinHash ? (inputHash===u.pinHash) : (_pinBuffer===u.pin);
@@ -800,12 +844,30 @@ async function findUser(){
   const local=getUsers();
   let found=local.find(u=>u.nick.toLowerCase()===nick);
 
-  // 2. Si no está local, buscar en Firestore
+  // 2. Intentar meta/users en Firestore
   if(!found && window._firestore){
     try{
       await syncUsersFromCloud();
       found=getUsers().find(u=>u.nick.toLowerCase()===nick);
-    }catch(e){ console.warn('findUser cloud error:',e); }
+    }catch(e){ console.warn('findUser meta error:',e); }
+  }
+
+  // 3. Búsqueda directa en colección 'usuarios' por campo nick (más robusto)
+  if(!found && window._findUserByNick){
+    errEl.textContent='🔍 Buscando en la nube...';
+    try{
+      const cloudUser = await window._findUserByNick(nick);
+      if(cloudUser){
+        // Usuario encontrado en Firestore pero no en localStorage ni meta/users
+        // Lo registramos localmente con PIN vacío — deberá resetear PIN
+        const users=getUsers();
+        if(!users.find(u=>u.id===cloudUser.id)){
+          users.push({id:cloudUser.id, name:cloudUser.nick, nick:cloudUser.nick, pin:'', pinHash:'', db:cloudUser.db||null, needsPinReset:true});
+          localStorage.setItem('fcup_users', JSON.stringify(users));
+        }
+        found=getUsers().find(u=>u.id===cloudUser.id);
+      }
+    }catch(e){ console.warn('findUser direct error:',e); }
   }
 
   if(!found){
@@ -816,9 +878,17 @@ async function findUser(){
   errEl.textContent='';
   _pinTarget=found.id;
   _pinBuffer=''; updatePinDots();
-  document.getElementById('pinLabel').textContent=`PIN para @${found.nick}`;
-  document.getElementById('pinError').textContent='';
-  document.getElementById('loginSub').textContent=`Hola, ${found.name} 👋`;
+
+  // Si el usuario fue encontrado por búsqueda directa y no tiene PIN guardado localmente,
+  // pedirle que configure su PIN en este dispositivo
+  if(found.needsPinReset){
+    document.getElementById('pinLabel').textContent=`Nuevo dispositivo — configura tu PIN para @${found.nick}`;
+    document.getElementById('pinError').textContent='⚠️ Crea un PIN para este dispositivo';
+  } else {
+    document.getElementById('pinLabel').textContent=`PIN para @${found.nick}`;
+    document.getElementById('pinError').textContent='';
+  }
+  document.getElementById('loginSub').textContent=`Hola, ${found.name||found.nick} 👋`;
   _loginShowOnly('pinSection');
 }
 
@@ -933,8 +1003,10 @@ function save(){
   if(!activeUserId)return;
   // 1. Guardar en localStorage (respaldo offline inmediato)
   try{ localStorage.setItem('fcup_db_'+activeUserId, JSON.stringify(db)); }catch(e){}
-  // 2. Guardar en Firestore (sincronización nube)
-  if(window._saveToFirestore) window._saveToFirestore(activeUserId, db);
+  // 2. Guardar en Firestore — incluir nick como índice de búsqueda
+  const users=getUsers();
+  const u=users.find(x=>x.id===activeUserId);
+  if(window._saveToFirestore) window._saveToFirestore(activeUserId, db, u?.nick||'');
 }
 
 function findPrevMonthData(){
