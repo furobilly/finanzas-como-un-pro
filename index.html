@@ -93,6 +93,38 @@
     return null;
   };
 
+  // Guardar comprobante en documento separado (evita límite 1MB del doc principal)
+  window._saveProofToFirestore = (userId, key, proofData) => {
+    try{
+      const ref = doc(firestore, 'comprobantes', userId);
+      const payload = {};
+      payload[key.replace(/[^a-zA-Z0-9_]/g,'_')] = proofData;
+      setDoc(ref, payload, {merge:true})
+        .catch(e => console.warn('Proof save error:', e));
+    }catch(e){}
+  };
+
+  window._loadProofsFromFirestore = async (userId) => {
+    try{
+      const ref = doc(firestore, 'comprobantes', userId);
+      const snap = await getDoc(ref);
+      if(snap.exists()) return snap.data();
+    }catch(e){ console.warn('Proof load error:', e); }
+    return {};
+  };
+
+  window._deleteProofFromFirestore = (userId, key) => {
+    try{
+      // Firestore no permite borrar campos directamente con setDoc null en todos los SDKs web
+      // Guardamos un marcador de borrado
+      const ref = doc(firestore, 'comprobantes', userId);
+      const payload = {};
+      payload[key.replace(/[^a-zA-Z0-9_]/g,'_')] = '__deleted__';
+      setDoc(ref, payload, {merge:true})
+        .catch(e => console.warn('Proof delete error:', e));
+    }catch(e){}
+  };
+
   window._firebaseReady = true;
   // Esperar a que el DOM esté listo antes de disparar el evento
   if(document.readyState === 'complete'){
@@ -1265,7 +1297,7 @@ function drawUpcoming(){
       if(!done) pending += realAmt;
       // Solo servicios son editables en monto (no tarjetas ni préstamos que tienen su propia lógica)
       const canEdit = p.key.startsWith('service-');
-      const hasProof = payInfo && typeof payInfo==='object' && payInfo.proof;
+      const hasProof = payInfo && typeof payInfo==='object' && payInfo.proofRef;
       return`<div class="pay ${done?'done':''}">
         <input type="checkbox" ${done?'checked':''} onchange="togglePay('${p.key}',this.checked,'${p.name}',${p.amt})"/>
         <div class="pay-icon">${p.icon}</div>
@@ -1557,44 +1589,71 @@ function drawReports(){
 // ══════════════════════════════════════════════════════
 let _proofKey = '';
 
-function openProof(key, name){
+async function openProof(key, name){
   _proofKey = key;
   const m = monthObj();
   const payInfo = m.payments[key];
-  const proof = payInfo && typeof payInfo==='object' ? payInfo.proof : null;
+  const proofRef = payInfo && typeof payInfo==='object' ? payInfo.proofRef : null;
+  const proofType = payInfo && typeof payInfo==='object' ? payInfo.proofType : null;
   document.getElementById('proofTitle').textContent = '📎 Comprobante — ' + name;
   const content = document.getElementById('proofContent');
   const delBtn = document.getElementById('proofDelBtn');
   const dlBtn = document.getElementById('proofDownloadBtn');
-
-  if(proof){
-    // Mostrar comprobante existente
-    const isPdf = proof.startsWith('data:application/pdf');
-    if(isPdf){
-      content.innerHTML = `<div style="text-align:center;padding:var(--space-lg)">
-        <div style="font-size:3rem">📄</div>
-        <div style="font-size:.9rem;margin-top:8px;color:var(--text-secondary)">Comprobante PDF guardado</div>
-      </div>`;
-      dlBtn.href = proof; dlBtn.download = 'comprobante.pdf';
-    } else {
-      content.innerHTML = `<img src="${proof}" class="proof-preview" alt="Comprobante"/>`;
-      dlBtn.href = proof; dlBtn.download = 'comprobante.jpg';
-    }
-    delBtn.style.display = 'inline-flex';
-    dlBtn.style.display = 'inline-flex';
-  } else {
-    // Mostrar zona de carga
-    content.innerHTML = `
-      <div class="proof-drop" onclick="document.getElementById('proofFileIn').click()">
-        <input type="file" id="proofFileIn" accept="image/*,application/pdf" onchange="handleProofFile(event)"/>
-        <div style="font-size:2.5rem">📎</div>
-        <div style="font-weight:700;margin:8px 0 4px">Toca para subir comprobante</div>
-        <div style="font-size:.8rem;color:var(--text-secondary)">Imagen (JPG, PNG) o PDF • Se comprime automáticamente</div>
-      </div>`;
-    delBtn.style.display = 'none';
-    dlBtn.style.display = 'none';
-  }
   document.getElementById('proofModal').classList.add('open');
+
+  if(proofRef){
+    content.innerHTML = `<div style="text-align:center;padding:var(--space-lg);color:var(--text-secondary)">⏳ Cargando comprobante...</div>`;
+    delBtn.style.display = 'none'; dlBtn.style.display = 'none';
+
+    // 1. Buscar en localStorage primero (rápido)
+    let proof = localStorage.getItem('fcup_proof_' + proofRef);
+
+    // 2. Si no está local, buscar en Firestore
+    if(!proof && window._loadProofsFromFirestore){
+      try{
+        const proofs = await window._loadProofsFromFirestore(activeUserId);
+        proof = proofs[proofRef];
+        if(proof && proof !== '__deleted__'){
+          localStorage.setItem('fcup_proof_' + proofRef, proof);
+        }
+      }catch(e){ console.warn('load proof error:',e); }
+    }
+
+    if(proof && proof !== '__deleted__'){
+      const isPdf = proofType === 'pdf';
+      if(isPdf){
+        content.innerHTML = `<div style="text-align:center;padding:var(--space-lg)">
+          <div style="font-size:3rem">📄</div>
+          <div style="font-size:.9rem;margin-top:8px;color:var(--text-secondary)">Comprobante PDF guardado</div>
+        </div>`;
+        dlBtn.href = proof; dlBtn.download = 'comprobante.pdf';
+      } else {
+        content.innerHTML = `<img src="${proof}" class="proof-preview" alt="Comprobante"/>`;
+        dlBtn.href = proof; dlBtn.download = 'comprobante.jpg';
+      }
+      delBtn.style.display = 'inline-flex';
+      dlBtn.style.display = 'inline-flex';
+    } else {
+      // Referencia rota — limpiar y mostrar zona de carga
+      if(m.payments[key] && typeof m.payments[key]==='object'){
+        delete m.payments[key].proofRef; delete m.payments[key].proofType; delete m.payments[key].proofDate;
+      }
+      showUploadZone(content); delBtn.style.display='none'; dlBtn.style.display='none';
+    }
+  } else {
+    showUploadZone(content);
+    delBtn.style.display = 'none'; dlBtn.style.display = 'none';
+  }
+}
+
+function showUploadZone(container){
+  container.innerHTML = `
+    <div class="proof-drop" onclick="document.getElementById('proofFileIn').click()">
+      <input type="file" id="proofFileIn" accept="image/*,application/pdf" onchange="handleProofFile(event)"/>
+      <div style="font-size:2.5rem">📎</div>
+      <div style="font-weight:700;margin:8px 0 4px">Toca para subir comprobante</div>
+      <div style="font-size:.8rem;color:var(--text-secondary)">Imagen (JPG, PNG) o PDF • Se comprime automáticamente</div>
+    </div>`;
 }
 
 function handleProofFile(e){
@@ -1633,10 +1692,20 @@ function saveProof(data, type){
   if(!m.payments[_proofKey] || typeof m.payments[_proofKey] !== 'object'){
     m.payments[_proofKey] = {paid: m.payments[_proofKey]===true, amount: null};
   }
-  m.payments[_proofKey].proof = data;
+  // Guardar referencia en payments (sin el blob, solo metadatos)
+  const monthKey = keyOf(db.currentYear, db.currentMonth);
+  const storageKey = monthKey + '__' + _proofKey; // ej: "2026-03__service-123"
+  const safeKey = storageKey.replace(/[^a-zA-Z0-9_]/g,'_');
+  m.payments[_proofKey].proofRef = safeKey;
   m.payments[_proofKey].proofType = type;
   m.payments[_proofKey].proofDate = today();
-  // Auto-borrar comprobantes de más de 6 meses (al guardar, revisar toda la db)
+
+  // 1. Guardar blob en localStorage (acceso inmediato)
+  try{ localStorage.setItem('fcup_proof_'+safeKey, data); }catch(e){ console.warn('proof local save:',e); }
+
+  // 2. Guardar en Firestore en documento separado (no contamina el doc principal)
+  if(window._saveProofToFirestore) window._saveProofToFirestore(activeUserId, safeKey, data);
+
   cleanOldProofs();
   save(); closeProof(); drawDashboard();
   showMsg('Comprobante guardado ✅');
@@ -1645,10 +1714,14 @@ function saveProof(data, type){
 function deleteProof(){
   if(!confirm('¿Eliminar este comprobante?')) return;
   const m = monthObj();
-  if(m.payments[_proofKey] && typeof m.payments[_proofKey]==='object'){
-    delete m.payments[_proofKey].proof;
-    delete m.payments[_proofKey].proofType;
-    delete m.payments[_proofKey].proofDate;
+  const payInfo = m.payments[_proofKey];
+  if(payInfo && typeof payInfo==='object'){
+    const ref = payInfo.proofRef;
+    // Borrar de localStorage
+    if(ref) try{ localStorage.removeItem('fcup_proof_' + ref); }catch(e){}
+    // Marcar como borrado en Firestore
+    if(ref && window._deleteProofFromFirestore) window._deleteProofFromFirestore(activeUserId, ref);
+    delete payInfo.proofRef; delete payInfo.proofType; delete payInfo.proofDate;
   }
   save(); closeProof(); drawDashboard();
   showMsg('Comprobante eliminado');
@@ -1663,14 +1736,18 @@ function cleanOldProofs(){
   // Borrar comprobantes de meses con más de 6 meses de antigüedad
   const now = new Date();
   Object.keys(db.data).forEach(k => {
-    const [y, m] = k.split('-').map(Number);
-    const monthAge = (now.getFullYear() - y) * 12 + (now.getMonth() + 1 - m);
+    const [y, mo] = k.split('-').map(Number);
+    const monthAge = (now.getFullYear() - y) * 12 + (now.getMonth() + 1 - mo);
     if(monthAge > 6){
       const monthData = db.data[k];
       Object.keys(monthData.payments || {}).forEach(pk => {
         const p = monthData.payments[pk];
-        if(p && typeof p === 'object' && p.proof){
-          delete p.proof; delete p.proofType; delete p.proofDate;
+        if(p && typeof p === 'object' && p.proofRef){
+          // Borrar de localStorage
+          try{ localStorage.removeItem('fcup_proof_' + p.proofRef); }catch(e){}
+          // Marcar borrado en Firestore
+          if(window._deleteProofFromFirestore) window._deleteProofFromFirestore(activeUserId, p.proofRef);
+          delete p.proofRef; delete p.proofType; delete p.proofDate;
         }
       });
     }
