@@ -1,4 +1,11 @@
-<!DOCTYPE html>
+Identificador de actividad 6f8694f4-9bc4-424c-96a1-177529120ef6
+Identificador de la solicitud 751d2eaa-bd1c-6bb8-5014-c7b12ed83a28
+Código de estado 400
+Hora del error Wed Mar 18 2026 17:41:57 GMT-0600 (hora estándar central)
+Versión del servicio 13.0.27916.25
+Versión del cliente 2603.2.28388-train
+URI de clúster https://wabi-south-central-us-redirect.analysis.windows.net/
+Seguimiento de la pila <!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8"/>
@@ -1100,10 +1107,10 @@ async function loadUserSession(){
   document.getElementById('selMonth').value=db.currentMonth;
   ['inDate','exDate','savDate'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=today();});
   goTo('dash',document.querySelectorAll('.tab')[0]);
-  refreshAll();
+  try{ refreshAll(); }catch(e){ console.warn('refreshAll error:',e); }
   // Forzar save() para que el nick quede escrito en Firestore
   save();
-  // Pre-cargar comprobantes en segundo plano (sin bloquear la UI)
+  // Pre-cargar comprobantes en segundo plano — siempre ejecutar aunque falle algo antes
   _preloadProofs();
 }
 
@@ -1612,6 +1619,7 @@ function drawProjection(){
   document.getElementById('projMonths').textContent=months;
   const rate=(+document.getElementById('savRate').value||0)/100/12;
   document.getElementById('rateMonthly').textContent=((rate*100).toFixed(2));
+  const m=monthObj();
   let saldo=balanceOf(m.savings);
   const bars=[];for(let i=1;i<=months;i++){saldo+=saldo*rate;bars.push({label:'M'+i,val:saldo});}
   const max=Math.max(...bars.map(b=>b.val),1);
@@ -1664,14 +1672,25 @@ async function openProof(key, name){
       proof = localStorage.getItem('fcup_proof_' + proofRef);
     }
 
-    // 3. Si aún no está (otro dispositivo, precarga ya terminó sin encontrarlo), buscar directo
+    // 3. Si aún no está, buscar directo en Firestore
     if(!proof && window._loadProofsFromFirestore){
       content.innerHTML = `<div style="text-align:center;padding:var(--space-lg);color:var(--text-secondary)">🔍 Buscando en la nube...</div>`;
       try{
         const proofs = await window._loadProofsFromFirestore(activeUserId);
+        console.log('[Comprobantes] Firestore doc keys:', Object.keys(proofs||{}));
+        console.log('[Comprobantes] Buscando proofRef:', proofRef);
+        console.log('[Comprobantes] activeUserId:', activeUserId);
         proof = proofs[proofRef];
         if(proof && proof !== '__deleted__'){
           localStorage.setItem('fcup_proof_' + proofRef, proof);
+        } else {
+          // Intentar también con el proofRef tal cual viene (por si hubo doble normalización)
+          const altRef = proofRef.replace(/[^a-zA-Z0-9_]/g,'_');
+          if(altRef !== proofRef && proofs[altRef]){
+            proof = proofs[altRef];
+            localStorage.setItem('fcup_proof_' + proofRef, proof);
+            console.log('[Comprobantes] Encontrado con altRef:', altRef);
+          }
         }
       }catch(e){ console.warn('load proof error:',e); }
     }
@@ -1691,11 +1710,16 @@ async function openProof(key, name){
       delBtn.style.display = 'inline-flex';
       dlBtn.style.display = 'inline-flex';
     } else {
-      // Referencia rota — limpiar y mostrar zona de carga
-      if(m.payments[key] && typeof m.payments[key]==='object'){
-        delete m.payments[key].proofRef; delete m.payments[key].proofType; delete m.payments[key].proofDate;
-      }
-      showUploadZone(content); delBtn.style.display='none'; dlBtn.style.display='none';
+      // NO encontrado — pero NO borrar el proofRef (puede ser timing o red lenta)
+      // Solo mostrar zona de carga con opción de resubir — sin corromper datos
+      content.innerHTML = `
+        <div style="text-align:center;padding:var(--space-md);color:var(--danger);font-size:.85rem;margin-bottom:var(--space-sm)">
+          ⚠️ No se pudo cargar el comprobante desde la nube.<br>
+          <span style="color:var(--text-secondary)">Puedes volver a subirlo sin perder el registro.</span>
+        </div>`;
+      showUploadZone(content);
+      delBtn.style.display='none'; dlBtn.style.display='none';
+      // NUNCA borrar proofRef automáticamente — puede ser un problema temporal de red
     }
   } else {
     showUploadZone(content);
