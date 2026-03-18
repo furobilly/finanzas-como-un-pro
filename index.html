@@ -1101,8 +1101,24 @@ async function loadUserSession(){
   ['inDate','exDate','savDate'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=today();});
   goTo('dash',document.querySelectorAll('.tab')[0]);
   refreshAll();
-  // Forzar save() para que el nick quede escrito en Firestore (repara usuarios viejos con user:'')
+  // Forzar save() para que el nick quede escrito en Firestore
   save();
+  // Pre-cargar comprobantes en segundo plano (sin bloquear la UI)
+  _preloadProofs();
+}
+
+async function _preloadProofs(){
+  if(!window._loadProofsFromFirestore || !activeUserId) return;
+  try{
+    const proofs = await window._loadProofsFromFirestore(activeUserId);
+    if(!proofs) return;
+    // Guardar en localStorage para acceso instantáneo
+    Object.entries(proofs).forEach(([key, val])=>{
+      if(val && val !== '__deleted__'){
+        try{ localStorage.setItem('fcup_proof_'+key, val); }catch(e){}
+      }
+    });
+  }catch(e){ console.warn('preload proofs error:',e); }
 }
 
 function save(){
@@ -1178,33 +1194,58 @@ function serviceApplies(s, destYear, destMonth){
 
 function monthObj(){
   const k=keyOf(db.currentYear,db.currentMonth);
+  const masterServices=getAllMasterServices();
+  const masterCards=getAllMasterCards();
+  const masterLoans=getAllMasterLoans();
+
   if(!db.data[k]){
+    // Mes nuevo — crear desde maestros
     const prev=findPrevMonthData();
     const newM={income:[],expenses:[],services:[],cards:[],loans:[],payments:{},cardSettings:{},savings:{opening:0,goal:0,tx:[]}};
     if(prev||Object.keys(db.data).length>0){
-      // SERVICIOS — catálogo maestro completo
-      // Si fixed:true → hereda monto original. Si fixed:false (variable) → amount=0 cada mes nuevo
-      const masterServices=getAllMasterServices();
       newM.services=masterServices
         .filter(s=>serviceApplies(s,db.currentYear,db.currentMonth))
         .map(s=>({...s, amount: s.fixed ? s.amount : 0}));
-      // TARJETAS — catálogo maestro, cardSettings vacío cada mes
-      newM.cards=getAllMasterCards().map(c=>({...c}));
+      newM.cards=masterCards.map(c=>({...c}));
       newM.cardSettings={};
-      // Si el mes ya existía pero sin tarjetas (bug: se creó vacío antes de que hubiera datos),
-      // re-sincronizar tarjetas desde el maestro
-      if(db.data[k]&&!db.data[k].cards?.length&&newM.cards.length){
-        db.data[k].cards=newM.cards;
-      }
-      // PRÉSTAMOS — catálogo maestro, solo incompletos
-      newM.loans=getAllMasterLoans().map(l=>({...l}));
-      // AHORROS — saldo final del mes anterior → opening
+      newM.loans=masterLoans.map(l=>({...l}));
       if(prev){
         newM.savings.opening=balanceOf(prev.savings||{opening:0,tx:[]});
         newM.savings.goal=prev.savings?.goal||0;
       }
     }
     db.data[k]=newM; save();
+  } else {
+    // Mes existente — reparar si tiene servicios/tarjetas/préstamos faltantes
+    const m=db.data[k];
+    let repaired=false;
+
+    // Servicios: agregar los que faltan (sin tocar los que ya existen)
+    const existingSvcIds=new Set((m.services||[]).map(s=>s.id));
+    const missingSvcs=masterServices
+      .filter(s=>serviceApplies(s,db.currentYear,db.currentMonth)&&!existingSvcIds.has(s.id));
+    if(missingSvcs.length){
+      m.services=[...(m.services||[]),...missingSvcs.map(s=>({...s,amount:s.fixed?s.amount:0}))];
+      repaired=true;
+    }
+
+    // Tarjetas: agregar las que faltan (sin tocar las que ya existen)
+    const existingCardIds=new Set((m.cards||[]).map(c=>c.id));
+    const missingCards=masterCards.filter(c=>!existingCardIds.has(c.id));
+    if(missingCards.length){
+      m.cards=[...(m.cards||[]),...missingCards.map(c=>({...c}))];
+      repaired=true;
+    }
+
+    // Préstamos: agregar los que faltan (sin tocar los que ya existen)
+    const existingLoanIds=new Set((m.loans||[]).map(l=>l.id));
+    const missingLoans=masterLoans.filter(l=>!existingLoanIds.has(l.id));
+    if(missingLoans.length){
+      m.loans=[...(m.loans||[]),...missingLoans.map(l=>({...l}))];
+      repaired=true;
+    }
+
+    if(repaired) save();
   }
   return db.data[k];
 }
@@ -1689,22 +1730,32 @@ function handleProofFile(e){
 
 function saveProof(data, type){
   const m = monthObj();
-  if(!m.payments[_proofKey] || typeof m.payments[_proofKey] !== 'object'){
-    m.payments[_proofKey] = {paid: m.payments[_proofKey]===true, amount: null};
-  }
-  // Guardar referencia en payments (sin el blob, solo metadatos)
-  const monthKey = keyOf(db.currentYear, db.currentMonth);
-  const storageKey = monthKey + '__' + _proofKey; // ej: "2026-03__service-123"
-  const safeKey = storageKey.replace(/[^a-zA-Z0-9_]/g,'_');
-  m.payments[_proofKey].proofRef = safeKey;
-  m.payments[_proofKey].proofType = type;
-  m.payments[_proofKey].proofDate = today();
+  const prev = m.payments[_proofKey];
+
+  // Preservar estado pagado y monto si ya existe, sin importar el orden
+  const wasPaid  = prev === true || (prev && typeof prev==='object' && prev.paid);
+  const prevAmt  = (prev && typeof prev==='object' && prev.amount != null) ? prev.amount : null;
+  const paidDate = (prev && typeof prev==='object' && prev.paidDate) ? prev.paidDate : null;
+
+  // Clave única para este comprobante: mes + key del pago
+  const monthKey  = keyOf(db.currentYear, db.currentMonth);
+  const storageKey = (monthKey + '__' + _proofKey).replace(/[^a-zA-Z0-9_]/g,'_');
+
+  // Actualizar payments preservando todo lo que ya había
+  m.payments[_proofKey] = {
+    paid:      wasPaid,
+    amount:    prevAmt,
+    paidDate:  paidDate,
+    proofRef:  storageKey,
+    proofType: type,
+    proofDate: today()
+  };
 
   // 1. Guardar blob en localStorage (acceso inmediato)
-  try{ localStorage.setItem('fcup_proof_'+safeKey, data); }catch(e){ console.warn('proof local save:',e); }
+  try{ localStorage.setItem('fcup_proof_'+storageKey, data); }catch(e){ console.warn('proof local save:',e); }
 
-  // 2. Guardar en Firestore en documento separado (no contamina el doc principal)
-  if(window._saveProofToFirestore) window._saveProofToFirestore(activeUserId, safeKey, data);
+  // 2. Guardar en Firestore en documento separado
+  if(window._saveProofToFirestore) window._saveProofToFirestore(activeUserId, storageKey, data);
 
   cleanOldProofs();
   save(); closeProof(); drawDashboard();
