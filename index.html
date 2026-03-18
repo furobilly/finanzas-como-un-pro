@@ -1107,18 +1107,26 @@ async function loadUserSession(){
   _preloadProofs();
 }
 
+let _proofsReady = false;
+let _proofsLoadingPromise = null;
+
 async function _preloadProofs(){
   if(!window._loadProofsFromFirestore || !activeUserId) return;
-  try{
-    const proofs = await window._loadProofsFromFirestore(activeUserId);
-    if(!proofs) return;
-    // Guardar en localStorage para acceso instantáneo
-    Object.entries(proofs).forEach(([key, val])=>{
-      if(val && val !== '__deleted__'){
-        try{ localStorage.setItem('fcup_proof_'+key, val); }catch(e){}
-      }
-    });
-  }catch(e){ console.warn('preload proofs error:',e); }
+  // Exponer la promesa para que openProof pueda esperarla si aún no terminó
+  _proofsReady = false;
+  _proofsLoadingPromise = (async()=>{
+    try{
+      const proofs = await window._loadProofsFromFirestore(activeUserId);
+      if(!proofs) return;
+      Object.entries(proofs).forEach(([key, val])=>{
+        if(val && val !== '__deleted__'){
+          try{ localStorage.setItem('fcup_proof_'+key, val); }catch(e){}
+        }
+      });
+    }catch(e){ console.warn('preload proofs error:',e); }
+    finally{ _proofsReady = true; }
+  })();
+  return _proofsLoadingPromise;
 }
 
 function save(){
@@ -1646,11 +1654,19 @@ async function openProof(key, name){
     content.innerHTML = `<div style="text-align:center;padding:var(--space-lg);color:var(--text-secondary)">⏳ Cargando comprobante...</div>`;
     delBtn.style.display = 'none'; dlBtn.style.display = 'none';
 
-    // 1. Buscar en localStorage primero (rápido)
+    // 1. Buscar en localStorage primero (rápido — ya debería estar si se precargó)
     let proof = localStorage.getItem('fcup_proof_' + proofRef);
 
-    // 2. Si no está local, buscar en Firestore
+    // 2. Si no está local y la precarga aún está corriendo, esperarla
+    if(!proof && _proofsLoadingPromise && !_proofsReady){
+      content.innerHTML = `<div style="text-align:center;padding:var(--space-lg);color:var(--text-secondary)">☁️ Sincronizando comprobante...</div>`;
+      try{ await _proofsLoadingPromise; }catch(e){}
+      proof = localStorage.getItem('fcup_proof_' + proofRef);
+    }
+
+    // 3. Si aún no está (otro dispositivo, precarga ya terminó sin encontrarlo), buscar directo
     if(!proof && window._loadProofsFromFirestore){
+      content.innerHTML = `<div style="text-align:center;padding:var(--space-lg);color:var(--text-secondary)">🔍 Buscando en la nube...</div>`;
       try{
         const proofs = await window._loadProofsFromFirestore(activeUserId);
         proof = proofs[proofRef];
