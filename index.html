@@ -93,34 +93,54 @@
     return null;
   };
 
-  // Guardar comprobante en documento separado (evita límite 1MB del doc principal)
+  // Cada comprobante en su PROPIO documento → evita límite 1MB de Firestore
+  // Ruta: comprobantes/{userId}_{proofKey}
   window._saveProofToFirestore = (userId, key, proofData) => {
     try{
-      const ref = doc(firestore, 'comprobantes', userId);
-      const payload = {};
-      payload[key.replace(/[^a-zA-Z0-9_]/g,'_')] = proofData;
-      setDoc(ref, payload, {merge:true})
+      const safeKey = key.replace(/[^a-zA-Z0-9_]/g,'_');
+      const docId = userId + '_' + safeKey;
+      const ref = doc(firestore, 'comprobantes', docId);
+      setDoc(ref, { data: proofData, userId, key: safeKey, ts: Date.now() })
         .catch(e => console.warn('Proof save error:', e));
-    }catch(e){}
+    }catch(e){ console.warn('Proof save outer error:',e); }
   };
 
+  // Cargar UN comprobante específico por su key
+  window._loadOneProofFromFirestore = async (userId, key) => {
+    try{
+      const safeKey = key.replace(/[^a-zA-Z0-9_]/g,'_');
+      const docId = userId + '_' + safeKey;
+      const ref = doc(firestore, 'comprobantes', docId);
+      const snap = await getDoc(ref);
+      if(snap.exists() && snap.data().data) return snap.data().data;
+    }catch(e){ console.warn('Proof load error:', e); }
+    return null;
+  };
+
+  // Cargar TODOS los comprobantes del usuario (para precarga)
   window._loadProofsFromFirestore = async (userId) => {
     try{
-      const ref = doc(firestore, 'comprobantes', userId);
-      const snap = await getDoc(ref);
-      if(snap.exists()) return snap.data();
-    }catch(e){ console.warn('Proof load error:', e); }
+      const col = collection(firestore, 'comprobantes');
+      const snap = await getDocs(col);
+      const result = {};
+      snap.docs.forEach(d => {
+        const data = d.data();
+        if(data.userId === userId && data.key && data.data){
+          result[data.key] = data.data;
+        }
+      });
+      return result;
+    }catch(e){ console.warn('Proof loadAll error:', e); }
     return {};
   };
 
   window._deleteProofFromFirestore = (userId, key) => {
     try{
-      // Firestore no permite borrar campos directamente con setDoc null en todos los SDKs web
-      // Guardamos un marcador de borrado
-      const ref = doc(firestore, 'comprobantes', userId);
-      const payload = {};
-      payload[key.replace(/[^a-zA-Z0-9_]/g,'_')] = '__deleted__';
-      setDoc(ref, payload, {merge:true})
+      const safeKey = key.replace(/[^a-zA-Z0-9_]/g,'_');
+      const docId = userId + '_' + safeKey;
+      const ref = doc(firestore, 'comprobantes', docId);
+      // Marcar como borrado (no deleteDoc para mantener compatibilidad)
+      setDoc(ref, { data: '__deleted__', userId, key: safeKey, ts: Date.now() })
         .catch(e => console.warn('Proof delete error:', e));
     }catch(e){}
   };
@@ -1665,25 +1685,15 @@ async function openProof(key, name){
       proof = localStorage.getItem('fcup_proof_' + proofRef);
     }
 
-    // 3. Si aún no está, buscar directo en Firestore
-    if(!proof && window._loadProofsFromFirestore){
+    // 3. Si aún no está, buscar DIRECTAMENTE el doc específico en Firestore (rápido y sin límite de tamaño)
+    if(!proof && window._loadOneProofFromFirestore){
       content.innerHTML = `<div style="text-align:center;padding:var(--space-lg);color:var(--text-secondary)">🔍 Buscando en la nube...</div>`;
       try{
-        const proofs = await window._loadProofsFromFirestore(activeUserId);
-        console.log('[Comprobantes] Firestore doc keys:', Object.keys(proofs||{}));
-        console.log('[Comprobantes] Buscando proofRef:', proofRef);
-        console.log('[Comprobantes] activeUserId:', activeUserId);
-        proof = proofs[proofRef];
+        proof = await window._loadOneProofFromFirestore(activeUserId, proofRef);
         if(proof && proof !== '__deleted__'){
-          localStorage.setItem('fcup_proof_' + proofRef, proof);
+          try{ localStorage.setItem('fcup_proof_' + proofRef, proof); }catch(e){}
         } else {
-          // Intentar también con el proofRef tal cual viene (por si hubo doble normalización)
-          const altRef = proofRef.replace(/[^a-zA-Z0-9_]/g,'_');
-          if(altRef !== proofRef && proofs[altRef]){
-            proof = proofs[altRef];
-            localStorage.setItem('fcup_proof_' + proofRef, proof);
-            console.log('[Comprobantes] Encontrado con altRef:', altRef);
-          }
+          proof = null;
         }
       }catch(e){ console.warn('load proof error:',e); }
     }
@@ -1747,12 +1757,13 @@ function handleProofFile(e){
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX = 1200;
+        const MAX = 900; // Máx 900px para mantener cada doc bajo 500KB
         let w = img.width, h = img.height;
         if(w > MAX){ h = Math.round(h * MAX / w); w = MAX; }
+        if(h > MAX){ w = Math.round(w * MAX / h); h = MAX; }
         canvas.width = w; canvas.height = h;
         canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        const compressed = canvas.toDataURL('image/jpeg', 0.75);
+        const compressed = canvas.toDataURL('image/jpeg', 0.65); // 0.65 calidad suficiente para comprobantes
         saveProof(compressed, 'img');
       };
       img.src = data;
