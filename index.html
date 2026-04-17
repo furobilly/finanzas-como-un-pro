@@ -20,13 +20,11 @@
   const firebaseApp = initializeApp(firebaseConfig);
   const firestore  = getFirestore(firebaseApp);
 
-  // Exponer al scope global para que el resto del código lo use
   window._firestore   = firestore;
   window._fsDoc       = doc;
   window._fsSetDoc    = setDoc;
   window._fsGetDoc    = getDoc;
 
-  // Exponer loadFromFirestore y saveToFirestore globalmente
   window._loadFromFirestore = async (userId) => {
     try{
       const ref = doc(firestore, 'usuarios', userId);
@@ -40,13 +38,12 @@
     try{
       const ref = doc(firestore, 'usuarios', userId);
       const payload = { db: JSON.stringify(db) };
-      if(nick) payload.nick = nick; // índice para búsqueda por apodo
+      if(nick) payload.nick = nick;
       setDoc(ref, payload, { merge: true })
         .catch(e => console.warn('Firestore save error:', e));
     }catch(e){}
   };
 
-  // Buscar usuario por apodo directamente en la colección 'usuarios'
   window._findUserByNick = async (nick) => {
     const nickLower = nick.toLowerCase().trim();
     try{
@@ -54,14 +51,10 @@
       const snap = await getDocs(col);
       for(const docSnap of snap.docs){
         const data = docSnap.data();
-
-        // Nivel A: campo nick directo en el documento
         if(data.nick && data.nick.toLowerCase() === nickLower){
           const parsed = data.db ? JSON.parse(data.db) : null;
           return { id: docSnap.id, nick: data.nick, db: parsed };
         }
-
-        // Nivel B: dentro del JSON de db → campo user
         if(data.db){
           try{
             const parsed = JSON.parse(data.db);
@@ -70,13 +63,9 @@
             }
           }catch(e){}
         }
-
-        // Nivel C: buscar nick dentro del JSON completo como string
-        // (cubre casos donde user:'' pero el nick aparece como valor en algún campo)
         if(data.db){
           try{
             const raw = data.db;
-            // Buscar patrones comunes donde se guardó el nick
             const patterns = [
               `"user":"${nickLower}"`,
               `"nick":"${nickLower}"`,
@@ -93,8 +82,6 @@
     return null;
   };
 
-  // Cada comprobante en su PROPIO documento → evita límite 1MB de Firestore
-  // Ruta: comprobantes/{userId}_{proofKey}
   window._saveProofToFirestore = (userId, key, proofData) => {
     try{
       const safeKey = key.replace(/[^a-zA-Z0-9_]/g,'_');
@@ -105,7 +92,6 @@
     }catch(e){ console.warn('Proof save outer error:',e); }
   };
 
-  // Cargar UN comprobante específico por su key
   window._loadOneProofFromFirestore = async (userId, key) => {
     try{
       const safeKey = key.replace(/[^a-zA-Z0-9_]/g,'_');
@@ -117,7 +103,6 @@
     return null;
   };
 
-  // Cargar TODOS los comprobantes del usuario (para precarga)
   window._loadProofsFromFirestore = async (userId) => {
     try{
       const col = collection(firestore, 'comprobantes');
@@ -139,14 +124,12 @@
       const safeKey = key.replace(/[^a-zA-Z0-9_]/g,'_');
       const docId = userId + '_' + safeKey;
       const ref = doc(firestore, 'comprobantes', docId);
-      // Marcar como borrado (no deleteDoc para mantener compatibilidad)
       setDoc(ref, { data: '__deleted__', userId, key: safeKey, ts: Date.now() })
         .catch(e => console.warn('Proof delete error:', e));
     }catch(e){}
   };
 
   window._firebaseReady = true;
-  // Esperar a que el DOM esté listo antes de disparar el evento
   if(document.readyState === 'complete'){
     document.dispatchEvent(new Event('firebaseReady'));
   } else {
@@ -383,17 +366,11 @@ tr:hover td{background:var(--bg-subtle)}
   <div class="login-box">
     <div class="login-title">Finanzas Como Un Pro</div>
     <div class="login-sub" id="loginSub">¿Qué deseas hacer?</div>
-
-    <!-- Botones iniciales -->
     <div id="loginOptions" style="display:flex;flex-direction:column;gap:var(--space-sm);margin-bottom:var(--space-md)">
       <button class="btn btn-primary" style="width:100%;padding:14px;font-size:1rem" id="btnYaTengo">🔑 Ya tengo cuenta</button>
       <button class="btn btn-ghost" style="width:100%;padding:14px;font-size:1rem" id="btnSoyNuevo">✨ Soy nuevo</button>
     </div>
-
-    <!-- Usuarios locales (si existen) -->
     <div class="user-cards" id="userCardsList" style="display:none"></div>
-
-    <!-- Buscar cuenta existente -->
     <div id="findUserSection" style="display:none;margin-bottom:var(--space-md)">
       <div class="form-group" style="margin-bottom:var(--space-sm)">
         <label>Tu apodo</label>
@@ -403,8 +380,6 @@ tr:hover td{background:var(--bg-subtle)}
       <div class="err-msg" id="findErr" style="margin-top:6px"></div>
       <button class="btn btn-ghost" style="width:100%;margin-top:var(--space-sm)" onclick="backToOptions()">← Regresar</button>
     </div>
-
-    <!-- PIN section -->
     <div class="pin-section" id="pinSection">
       <div class="pin-label" id="pinLabel">Ingresa tu PIN</div>
       <div class="pin-dots" id="pinDots">
@@ -428,8 +403,6 @@ tr:hover td{background:var(--bg-subtle)}
       <div class="pin-error" id="pinError"></div>
       <button class="btn btn-ghost" style="width:100%;margin-top:var(--space-sm)" onclick="backToOptions()">← Regresar</button>
     </div>
-
-    <!-- Nuevo usuario -->
     <div class="new-user-form" id="newUserForm" style="display:none">
       <div class="form-group" style="margin-bottom:var(--space-sm)">
         <label>Nombre completo</label>
@@ -507,6 +480,8 @@ tr:hover td{background:var(--bg-subtle)}
     <div class="card"><div class="card-title">🛒 Gastos por Categoría</div><div id="expCats"></div></div>
     <div class="card"><div class="card-title">🕐 Últimos 5 Gastos</div><div id="recentExp"></div></div>
   </div>
+  <!-- ✅ CAMBIO 1: Sección Progreso de Créditos -->
+  <div class="card" style="margin-top:var(--space-md)"><div class="card-title">🏦 Progreso de Créditos</div><div id="loanProgressDash"></div></div>
 </div>
 <!-- INGRESOS -->
 <div id="page-income" class="page">
@@ -662,7 +637,7 @@ tr:hover td{background:var(--bg-subtle)}
 </div>
 </main>
 
-<div class="ver-footer">v3.0</div>
+<div class="ver-footer">v3.1</div>
 </div><!-- .wrap -->
 </div><!-- #appScreen -->
 
@@ -737,22 +712,17 @@ function showMsg(t,type='ok'){
 
 // ══════════════════════════════════════════════════════
 //  USER / AUTH SYSTEM
-//  Estructura en localStorage:
-//  'fcup_users' → [{id, name, nick, pin, db:{...}}]
-//  'fcup_blocked' → {userId, until}
 // ══════════════════════════════════════════════════════
 const MAX_USERS = 2;
-let activeUserId = null; // ID del usuario activo
+let activeUserId = null;
 let _pinBuffer   = '';
-let _pinTarget   = null; // ID del usuario al que se le está pidiendo PIN
+let _pinTarget   = null;
 
-// ── HASH PIN (seguridad simple) ───────────────────────────────────────────────
 async function hashPin(pin){
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pin+'fcup_salt'));
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('').slice(0,16);
 }
 
-// ── USUARIOS: sync con Firestore ─────────────────────────────────────────────
 async function syncUsersFromCloud(){
   if(!window._firestore) return;
   try{
@@ -781,7 +751,7 @@ function getBlockInfo(){
   try{return JSON.parse(localStorage.getItem('fcup_blocked')||'null');}catch(e){return null;}
 }
 function setBlockInfo(userId){
-  const until=Date.now()+60000; // 1 minuto
+  const until=Date.now()+60000;
   localStorage.setItem('fcup_blocked',JSON.stringify({userId,until}));
 }
 function clearBlockInfo(){localStorage.removeItem('fcup_blocked');}
@@ -800,13 +770,10 @@ function saveUserDb(userId,db){
   saveUsers(users);
 }
 
-// ── Pantalla de login ──────────────────────────────────
 async function renderLoginScreen(){
   _pinBuffer='';
   _pinTarget=null;
   updatePinDots();
-
-  // Pre-cargar tarjetas de usuario (para cuando el usuario pulse "Ya tengo cuenta")
   await syncUsersFromCloud();
   const users=getUsers();
   const list=document.getElementById('userCardsList');
@@ -819,8 +786,6 @@ async function renderLoginScreen(){
       </div>
       <button class="user-del" title="Eliminar usuario" onclick="event.stopPropagation();deleteUser('${u.id}')">🗑</button>
     </div>`).join('');
-
-  // Mostrar solo los botones principales; ocultar todo lo demás
   document.getElementById('loginSub').textContent='¿Qué deseas hacer?';
   document.getElementById('loginOptions').style.display='flex';
   document.getElementById('userCardsList').style.display='none';
@@ -828,8 +793,6 @@ async function renderLoginScreen(){
   document.getElementById('pinSection').style.display='none';
   document.getElementById('pinError').textContent='';
   document.getElementById('newUserForm').style.display='none';
-
-  // Controlar visibilidad del mensaje de máximo usuarios
   const maxMsg=document.getElementById('maxUsersMsg');
   if(maxMsg) maxMsg.style.display=users.length>=MAX_USERS?'block':'none';
 }
@@ -844,7 +807,6 @@ function selectUser(userId){
     return;
   }
   if(block&&block.userId===userId) clearBlockInfo();
-
   _pinTarget=userId;
   _pinBuffer='';
   updatePinDots();
@@ -888,12 +850,9 @@ async function pinEnter(){
   if(!_pinTarget){return;}
   const block=getBlockInfo();
   if(block&&block.userId===_pinTarget&&Date.now()<block.until) return;
-
   const users=getUsers();
   const u=users.find(x=>x.id===_pinTarget);
   if(!u){showMsg('Usuario no encontrado','err');return;}
-
-  // Caso especial: usuario encontrado en nube sin PIN local (nuevo dispositivo)
   if(u.needsPinReset){
     if(_pinBuffer.length<4){ showMsg('El PIN debe tener 4 dígitos','err'); _pinBuffer=''; updatePinDots(); return; }
     const newHash = await hashPin(_pinBuffer);
@@ -908,13 +867,9 @@ async function pinEnter(){
     await loadUserSession();
     return;
   }
-
-  // Comparar siempre con hash (más seguro). Soporte legacy para pins sin hash aún.
   const inputHash = await hashPin(_pinBuffer);
   const pinOk = u.pinHash ? (inputHash===u.pinHash) : (_pinBuffer===u.pin);
-
   if(pinOk){
-    // PIN correcto → limpiar texto plano si aún existe, guardar solo hash
     if(u.pin){
       const allUsers=getUsers();
       const idx=allUsers.findIndex(x=>x.id===_pinTarget);
@@ -926,7 +881,6 @@ async function pinEnter(){
     document.getElementById('appScreen').style.display='block';
     await loadUserSession();
   } else {
-    // PIN incorrecto → bloquear
     _pinBuffer=''; updatePinDots();
     setBlockInfo(_pinTarget);
     document.getElementById('pinError').textContent='PIN incorrecto. Bloqueado 60 segundos.';
@@ -934,7 +888,6 @@ async function pinEnter(){
   }
 }
 
-// ── NAVEGACIÓN DEL LOGIN ──────────────────────────────────────────────────────
 function _loginShowOnly(sectionId){
   ['loginOptions','userCardsList','findUserSection','pinSection','newUserForm'].forEach(id=>{
     const el=document.getElementById(id);
@@ -954,34 +907,25 @@ function backToOptions(){
   });
 }
 
-// Buscar cuenta por apodo — funciona en dispositivo nuevo sin localStorage
 async function findUser(){
   const nick=document.getElementById('findNick').value.trim().toLowerCase();
   const errEl=document.getElementById('findErr');
   errEl.textContent='';
   if(!nick){ errEl.textContent='Escribe tu apodo'; return; }
   errEl.textContent='🔍 Buscando...';
-
-  // 1. Buscar en localStorage (dispositivo conocido)
   const local=getUsers();
   let found=local.find(u=>u.nick.toLowerCase()===nick);
-
-  // 2. Intentar meta/users en Firestore
   if(!found && window._firestore){
     try{
       await syncUsersFromCloud();
       found=getUsers().find(u=>u.nick.toLowerCase()===nick);
     }catch(e){ console.warn('findUser meta error:',e); }
   }
-
-  // 3. Búsqueda directa en colección 'usuarios' por campo nick (más robusto)
   if(!found && window._findUserByNick){
     errEl.textContent='🔍 Buscando en la nube...';
     try{
       const cloudUser = await window._findUserByNick(nick);
       if(cloudUser){
-        // Usuario encontrado en Firestore pero no en localStorage ni meta/users
-        // Lo registramos localmente con PIN vacío — deberá resetear PIN
         const users=getUsers();
         if(!users.find(u=>u.id===cloudUser.id)){
           users.push({id:cloudUser.id, name:cloudUser.nick, nick:cloudUser.nick, pin:'', pinHash:'', db:cloudUser.db||null, needsPinReset:true});
@@ -991,18 +935,13 @@ async function findUser(){
       }
     }catch(e){ console.warn('findUser direct error:',e); }
   }
-
   if(!found){
     errEl.textContent='No se encontró ese apodo. ¿Es correcto?';
     return;
   }
-
   errEl.textContent='';
   _pinTarget=found.id;
   _pinBuffer=''; updatePinDots();
-
-  // Si el usuario fue encontrado por búsqueda directa y no tiene PIN guardado localmente,
-  // pedirle que configure su PIN en este dispositivo
   if(found.needsPinReset){
     document.getElementById('pinLabel').textContent=`Nuevo dispositivo — configura tu PIN para @${found.nick}`;
     document.getElementById('pinError').textContent='⚠️ Crea un PIN para este dispositivo';
@@ -1054,13 +993,12 @@ function logout(){
   renderLoginScreen();
 }
 function switchUser(){
-  // Guarda estado actual y regresa al login
   if(db&&activeUserId) saveUserDb(activeUserId,db);
   logout();
 }
 
 // ══════════════════════════════════════════════════════
-//  DB — opera sobre el usuario activo
+//  DB
 // ══════════════════════════════════════════════════════
 let db={user:'',currentYear:new Date().getFullYear(),currentMonth:new Date().getMonth(),data:{}};
 
@@ -1080,50 +1018,35 @@ async function loadUserSession(){
   const users=getUsers();
   const u=users.find(x=>x.id===activeUserId);
   document.getElementById('activeUserLabel').textContent=u?.nick||u?.name||'—';
-
-  // Init year selector (solo primera vez)
   const sy=document.getElementById('selYear');
   if(!sy.options.length){
     for(let y=2026;y<=2035;y++){const o=document.createElement('option');o.value=y;o.textContent=y;sy.appendChild(o);}
   }
-
-  // Mostrar indicador de carga
   showMsg('⏳ Conectando con Firebase...');
-
-  // Esperar a que Firebase esté listo (máx 5 segundos)
   const fbReady = await waitForFirebase();
-
-  // Intentar cargar desde Firestore primero
   const cloudDb = fbReady && window._loadFromFirestore ? await window._loadFromFirestore(activeUserId) : null;
   if(cloudDb){
     db = cloudDb;
-    // Asegurar que db.user siempre tenga el nick (puede venir vacío desde la nube)
     if(!db.user && u?.nick) db.user = u.nick;
-    // Actualizar localStorage con datos de la nube
     try{ localStorage.setItem('fcup_db_'+activeUserId, JSON.stringify(db)); }catch(e){}
     showMsg('☁️ Datos sincronizados ✅');
   } else {
-    // Fallback: cargar desde localStorage
     try{
       const local = localStorage.getItem('fcup_db_'+activeUserId);
       if(local) db = JSON.parse(local);
       else {
-        // Intentar clave legacy
         const legacy = localStorage.getItem('finanzasDB');
         if(legacy) db = JSON.parse(legacy);
       }
     }catch(e){}
     showMsg('📱 Datos locales cargados');
   }
-
   sy.value=db.currentYear;
   document.getElementById('selMonth').value=db.currentMonth;
   ['inDate','exDate','savDate'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=today();});
   goTo('dash',document.querySelectorAll('.tab')[0]);
   try{ refreshAll(); }catch(e){ console.warn('refreshAll error:',e); }
-  // Forzar save() para que el nick quede escrito en Firestore
   save();
-  // Pre-cargar comprobantes en segundo plano — siempre ejecutar aunque falle algo antes
   _preloadProofs();
 }
 
@@ -1132,7 +1055,6 @@ let _proofsLoadingPromise = null;
 
 async function _preloadProofs(){
   if(!window._loadProofsFromFirestore || !activeUserId) return;
-  // Exponer la promesa para que openProof pueda esperarla si aún no terminó
   _proofsReady = false;
   _proofsLoadingPromise = (async()=>{
     try{
@@ -1151,18 +1073,14 @@ async function _preloadProofs(){
 
 function save(){
   if(!activeUserId)return;
-  // Asegurar que db.user siempre tenga el nick (índice de búsqueda en Firestore)
   const users=getUsers();
   const u=users.find(x=>x.id===activeUserId);
   if(u?.nick && !db.user) db.user = u.nick;
-  // 1. Guardar en localStorage (respaldo offline inmediato)
   try{ localStorage.setItem('fcup_db_'+activeUserId, JSON.stringify(db)); }catch(e){}
-  // 2. Guardar en Firestore — campo nick en el documento + dentro de db.user
   if(window._saveToFirestore) window._saveToFirestore(activeUserId, db, u?.nick||'');
 }
 
 function findPrevMonthData(){
-  // Busca hacia atrás hasta 12 meses para encontrar el mes con datos más reciente
   let y=db.currentYear, m=db.currentMonth;
   for(let i=0;i<12;i++){
     m--; if(m<0){m=11;y--;}
@@ -1183,25 +1101,21 @@ function getAllMasterServices(){
 }
 
 function getAllMasterCards(){
-  // Toma siempre la versión MÁS RECIENTE de cada tarjeta (igual que loans)
-  // para que editar en un mes reciente se propague hacia adelante
   const seen={};
   const keys=Object.keys(db.data).sort();
   for(const k of keys){
     const m=db.data[k];
-    for(const card of (m.cards||[])){ seen[card.id]=card; } // sobreescribe → queda la más reciente
+    for(const card of (m.cards||[])){ seen[card.id]=card; }
   }
   return Object.values(seen);
 }
 
 function getAllMasterLoans(){
-  // Solo préstamos aún no completados
   const seen={};
   const keys=Object.keys(db.data).sort();
   for(const k of keys){
     const m=db.data[k];
     for(const l of (m.loans||[])){
-      // Guardar siempre la versión más reciente (mayor progreso)
       if(!seen[l.id]||l.done>seen[l.id].done) seen[l.id]=l;
     }
   }
@@ -1209,8 +1123,6 @@ function getAllMasterLoans(){
 }
 
 function serviceApplies(s, destYear, destMonth){
-  // Calcula si un servicio aplica en el mes destino según su frecuencia
-  // Siempre usa startYear/startMonth del servicio como origen
   const sy = s.startYear ?? destYear;
   const sm = s.startMonth ?? destMonth;
   const diff = monthsDiff(sy, sm, destYear, destMonth);
@@ -1225,9 +1137,7 @@ function monthObj(){
   const masterServices=getAllMasterServices();
   const masterCards=getAllMasterCards();
   const masterLoans=getAllMasterLoans();
-
   if(!db.data[k]){
-    // Mes nuevo — crear desde maestros
     const prev=findPrevMonthData();
     const newM={income:[],expenses:[],services:[],cards:[],loans:[],payments:{},cardSettings:{},savings:{opening:0,goal:0,tx:[]}};
     if(prev||Object.keys(db.data).length>0){
@@ -1244,11 +1154,8 @@ function monthObj(){
     }
     db.data[k]=newM; save();
   } else {
-    // Mes existente — reparar si tiene servicios/tarjetas/préstamos faltantes
     const m=db.data[k];
     let repaired=false;
-
-    // Servicios: agregar los que faltan (sin tocar los que ya existen)
     const existingSvcIds=new Set((m.services||[]).map(s=>s.id));
     const missingSvcs=masterServices
       .filter(s=>serviceApplies(s,db.currentYear,db.currentMonth)&&!existingSvcIds.has(s.id));
@@ -1256,23 +1163,18 @@ function monthObj(){
       m.services=[...(m.services||[]),...missingSvcs.map(s=>({...s,amount:s.fixed?s.amount:0}))];
       repaired=true;
     }
-
-    // Tarjetas: agregar las que faltan (sin tocar las que ya existen)
     const existingCardIds=new Set((m.cards||[]).map(c=>c.id));
     const missingCards=masterCards.filter(c=>!existingCardIds.has(c.id));
     if(missingCards.length){
       m.cards=[...(m.cards||[]),...missingCards.map(c=>({...c}))];
       repaired=true;
     }
-
-    // Préstamos: agregar los que faltan (sin tocar los que ya existen)
     const existingLoanIds=new Set((m.loans||[]).map(l=>l.id));
     const missingLoans=masterLoans.filter(l=>!existingLoanIds.has(l.id));
     if(missingLoans.length){
       m.loans=[...(m.loans||[]),...missingLoans.map(l=>({...l}))];
       repaired=true;
     }
-
     if(repaired) save();
   }
   return db.data[k];
@@ -1282,7 +1184,6 @@ function totals(){
   const m=monthObj();
   const cs=m.cardSettings||{};
   const inc=sum(m.income,'amount');
-  // Servicios: usar monto real pagado si existe, si no el estimado del catálogo
   const fixSv=m.services.reduce((a,s)=>{
     const p=m.payments['service-'+s.id];
     const realAmt=(p&&typeof p==='object'&&p.amount!=null)?p.amount:s.amount;
@@ -1334,7 +1235,8 @@ function drawDashboard(){
     {cls:'savings',label:'Mis Ahorros',     val:t.savings},
   ].map(x=>`<div class="tile ${x.cls}"><div class="tile-label">${x.label}</div><div class="v">${money(x.val)}</div></div>`).join('');
   document.getElementById('tipBox').textContent=TIPS[Math.floor(Math.random()*TIPS.length)];
-  drawUpcoming(); drawExpensesOnDashboard();
+  // ✅ CAMBIO 2: se agrega drawLoanProgress()
+  drawUpcoming(); drawExpensesOnDashboard(); drawLoanProgress();
 }
 
 function drawUpcoming(){
@@ -1359,13 +1261,12 @@ function drawUpcoming(){
     if(!arr.length){document.getElementById(id).innerHTML='<div class="empty-state">Sin pagos esta quincena</div>';return;}
     let pending=0;
     const rows=arr.map(p=>{
-      // Usar monto real pagado si existe, si no el estimado
       const payInfo = m.payments[p.key];
       const done = payInfo === true || (payInfo && payInfo.paid);
       const realAmt = (payInfo && payInfo.amount != null) ? payInfo.amount : p.amt;
       if(!done) pending += realAmt;
-      // Solo servicios son editables en monto (no tarjetas ni préstamos que tienen su propia lógica)
-      const canEdit = p.key.startsWith('service-');
+      // ✅ CAMBIO 3: canEdit incluye préstamos
+      const canEdit = p.key.startsWith('service-') || p.key.startsWith('loan-');
       const hasProof = payInfo && typeof payInfo==='object' && payInfo.proofRef;
       return`<div class="pay ${done?'done':''}">
         <input type="checkbox" ${done?'checked':''} onchange="togglePay('${p.key}',this.checked,'${p.name}',${p.amt})"/>
@@ -1404,21 +1305,34 @@ function togglePay(key,checked,name,amt){
   save(); drawDashboard();
 }
 
+// ✅ CAMBIO 4: editPayAmt actualiza préstamos desde este mes en adelante
 function editPayAmt(key,defaultAmt){
   const m=monthObj();
   const prev=m.payments[key];
   const current=(prev&&typeof prev==='object'&&prev.amount!=null)?prev.amount:defaultAmt;
-  const input=prompt('Monto para este mes $:',current);
+  const input=prompt('Monto para este mes en adelante $:',current);
   if(input===null) return;
   const val=+input;
   if(isNaN(val)||val<0){showMsg('Monto inválido','err');return;}
   m.payments[key]=(prev&&typeof prev==='object')?{...prev,amount:val}:{paid:false,amount:val};
-  const svcId=+key.replace('service-','');
-  const svc=m.services.find(s=>s.id===svcId);
-  if(svc) svc.amount=val;
-  save(); drawDashboard(); showMsg('Monto actualizado ✅');
+  if(key.startsWith('service-')){
+    const svcId=+key.replace('service-','');
+    const svc=m.services.find(s=>s.id===svcId);
+    if(svc) svc.amount=val;
+  }
+  if(key.startsWith('loan-')){
+    const parts=key.replace('loan-','').split('-');
+    const loanId=+parts[0];
+    const currentKey=keyOf(db.currentYear,db.currentMonth);
+    Object.keys(db.data).forEach(k=>{
+      if(k>=currentKey){
+        const loan=(db.data[k].loans||[]).find(l=>l.id===loanId);
+        if(loan) loan.amount=val;
+      }
+    });
+  }
+  save(); drawDashboard(); drawLoans(); showMsg('Monto actualizado desde este mes ✅');
 }
-
 
 function drawExpensesOnDashboard(){
   const m=monthObj();
@@ -1434,6 +1348,43 @@ function drawExpensesOnDashboard(){
     ? recent.map(e=>`<div class="recent-exp"><div style="font-size:1.1rem">${CAT_ICONS[e.cat]||'📌'}</div><div class="re-info"><div class="re-desc">${e.desc}</div><div class="re-date">${fmtDate(e.date)}</div></div><div class="re-amt">${money(e.amount)}</div></div>`).join('')
       +`<div style="text-align:right;margin-top:8px"><button class="link-btn" onclick="goTo('expenses',document.querySelectorAll('.tab')[5])">Ver todos →</button></div>`
     : '<div class="empty-state">Sin gastos recientes</div>';
+}
+
+// ✅ CAMBIO 5: Nueva función — Progreso de Créditos en el Dashboard
+function drawLoanProgress(){
+  const m=monthObj();
+  const container=document.getElementById('loanProgressDash');
+  if(!container)return;
+  const activeLoans=m.loans.filter(l=>l.done<l.total);
+  if(!activeLoans.length){container.innerHTML='<div class="empty-state">🎉 Sin créditos activos este mes</div>';return;}
+  container.innerHTML=activeLoans.map(l=>{
+    const pct=l.total?Math.round((l.done/l.total)*100):0;
+    const remaining=l.total-l.done;
+    const totalDebt=remaining*l.amount;
+    const dias=l.freq==='quincenal'?`Días ${l.day1} y ${l.day2}`:`Día ${l.day||l.day1}`;
+    const editKey=l.freq==='quincenal'?`loan-${l.id}-q1`:`loan-${l.id}`;
+    return`<div style="background:var(--bg-subtle);border-radius:var(--radius-md);padding:var(--space-md);margin-bottom:var(--space-sm)">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:6px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:1.1rem">🏦</span>
+          <span style="font-weight:700;font-size:.9rem">${l.desc}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:.9rem;color:var(--danger)">${money(l.amount)}/pago</span>
+          <button onclick="editPayAmt('${editKey}',${l.amount})" style="background:none;border:none;cursor:pointer;font-size:.85rem;color:var(--text-secondary);padding:2px 4px;border-radius:4px" title="Editar monto desde este mes">✏️</button>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:.75rem;color:var(--text-secondary);margin-bottom:4px">
+        <span>${dias} · ${l.freq}</span>
+        <span><b style="color:var(--text-primary)">${l.done}/${l.total}</b> pagos (${pct}%)</span>
+      </div>
+      <div class="progress-wrap" style="height:8px;margin-bottom:6px"><div class="progress-fill" style="width:${pct}%"></div></div>
+      <div style="display:flex;justify-content:space-between;font-size:.75rem">
+        <span style="color:var(--text-secondary)">Faltan <b style="color:var(--text-primary)">${remaining} pagos</b></span>
+        <span style="color:var(--danger);font-family:'JetBrains Mono',monospace;font-weight:600">${money(totalDebt)} restante</span>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 // ══════════════════════════════════════════════════════
@@ -1509,13 +1460,11 @@ function saveCardSettings(id){save();showMsg('Guardado ✅');drawDashboard();}
 function editCard(id){const c=monthObj().cards.find(x=>x.id===id);if(!c)return;openModal('Editar Tarjeta',`<div class="form-group"><label>Alias</label><input id="mAlias" class="inp" value="${c.alias}"/></div><div class="form-group"><label>Banco</label><input id="mBank" class="inp" value="${c.bank}"/></div><div class="form-group"><label>Últimos 4</label><input id="mLast4" class="inp" maxlength="4" value="${c.last4||''}"/></div><div class="form-group"><label>Límite $</label><input id="mLimit" class="inp" type="number" value="${c.limit}"/></div><div class="form-group"><label>Día corte</label><input id="mCut" class="inp" type="number" min="1" max="31" value="${c.cutDay}"/></div><div class="form-group"><label>Día pago</label><input id="mPayDay" class="inp" type="number" min="1" max="31" value="${c.payDay}"/></div>`,'card',id);}
 function delCard(id){
   if(!confirm('¿Eliminar tarjeta? Se quitará de todos los meses.'))return;
-  // Guardar en historial antes de borrar
   const cardRef=monthObj().cards.find(x=>x.id===id);
   if(cardRef){
     if(!db.deletedCards) db.deletedCards=[];
     db.deletedCards.push({...cardRef, deletedAt:new Date().toISOString()});
   }
-  // Eliminar de TODOS los meses
   Object.values(db.data).forEach(m=>{ m.cards=(m.cards||[]).filter(x=>x.id!==id); delete (m.cardSettings||{})[id]; });
   save();refreshAll();showMsg('Tarjeta eliminada de todos los meses ✅');
 }
@@ -1532,7 +1481,6 @@ function addLoan(){
   const desc=document.getElementById('lnDesc').value.trim(),amt=document.getElementById('lnAmt').value,freq=document.getElementById('lnFreq').value,day1=document.getElementById('lnDay1').value,day2=document.getElementById('lnDay2').value,total=document.getElementById('lnTotal').value,done=document.getElementById('lnDone').value;
   if(!desc||!amt||!day1||!total){showMsg('Completa los campos requeridos','err');return;}
   if(freq==='quincenal'&&!day2){showMsg('Ingresa el segundo día de pago','err');return;}
-  // Advertencia si ambos días caen en la misma quincena
   if(freq==='quincenal'&&day1&&day2){
     const q1=qOf(day1), q2=qOf(day2);
     if(q1===q2){
@@ -1674,18 +1622,12 @@ async function openProof(key, name){
   if(proofRef){
     content.innerHTML = `<div style="text-align:center;padding:var(--space-lg);color:var(--text-secondary)">⏳ Cargando comprobante...</div>`;
     delBtn.style.display = 'none'; dlBtn.style.display = 'none';
-
-    // 1. Buscar en localStorage primero (rápido — ya debería estar si se precargó)
     let proof = localStorage.getItem('fcup_proof_' + proofRef);
-
-    // 2. Si no está local y la precarga aún está corriendo, esperarla
     if(!proof && _proofsLoadingPromise && !_proofsReady){
       content.innerHTML = `<div style="text-align:center;padding:var(--space-lg);color:var(--text-secondary)">☁️ Sincronizando comprobante...</div>`;
       try{ await _proofsLoadingPromise; }catch(e){}
       proof = localStorage.getItem('fcup_proof_' + proofRef);
     }
-
-    // 3. Si aún no está, buscar DIRECTAMENTE el doc específico en Firestore (rápido y sin límite de tamaño)
     if(!proof && window._loadOneProofFromFirestore){
       content.innerHTML = `<div style="text-align:center;padding:var(--space-lg);color:var(--text-secondary)">🔍 Buscando en la nube...</div>`;
       try{
@@ -1697,7 +1639,6 @@ async function openProof(key, name){
         }
       }catch(e){ console.warn('load proof error:',e); }
     }
-
     if(proof && proof !== '__deleted__'){
       const isPdf = proofType === 'pdf';
       if(isPdf){
@@ -1713,8 +1654,6 @@ async function openProof(key, name){
       delBtn.style.display = 'inline-flex';
       dlBtn.style.display = 'inline-flex';
     } else {
-      // NO encontrado — pero NO borrar el proofRef (puede ser timing o red lenta)
-      // Solo mostrar zona de carga con opción de resubir — sin corromper datos
       content.innerHTML = `
         <div style="text-align:center;padding:var(--space-md);color:var(--danger);font-size:.85rem;margin-bottom:var(--space-sm)">
           ⚠️ No se pudo cargar el comprobante desde la nube.<br>
@@ -1722,7 +1661,6 @@ async function openProof(key, name){
         </div>`;
       showUploadZone(content);
       delBtn.style.display='none'; dlBtn.style.display='none';
-      // NUNCA borrar proofRef automáticamente — puede ser un problema temporal de red
     }
   } else {
     showUploadZone(content);
@@ -1745,7 +1683,6 @@ function handleProofFile(e){
   if(!file) return;
   const maxMB = 4;
   if(file.size > maxMB * 1024 * 1024){ showMsg('Archivo muy grande (máx 4 MB)','err'); return; }
-
   const reader = new FileReader();
   reader.onload = ev => {
     const data = ev.target.result;
@@ -1753,17 +1690,16 @@ function handleProofFile(e){
     if(isPdf){
       saveProof(data, 'pdf');
     } else {
-      // Comprimir imagen antes de guardar
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX = 900; // Máx 900px para mantener cada doc bajo 500KB
+        const MAX = 900;
         let w = img.width, h = img.height;
         if(w > MAX){ h = Math.round(h * MAX / w); w = MAX; }
         if(h > MAX){ w = Math.round(w * MAX / h); h = MAX; }
         canvas.width = w; canvas.height = h;
         canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        const compressed = canvas.toDataURL('image/jpeg', 0.65); // 0.65 calidad suficiente para comprobantes
+        const compressed = canvas.toDataURL('image/jpeg', 0.65);
         saveProof(compressed, 'img');
       };
       img.src = data;
@@ -1775,17 +1711,11 @@ function handleProofFile(e){
 function saveProof(data, type){
   const m = monthObj();
   const prev = m.payments[_proofKey];
-
-  // Preservar estado pagado y monto si ya existe, sin importar el orden
   const wasPaid  = prev === true || (prev && typeof prev==='object' && prev.paid);
   const prevAmt  = (prev && typeof prev==='object' && prev.amount != null) ? prev.amount : null;
   const paidDate = (prev && typeof prev==='object' && prev.paidDate) ? prev.paidDate : null;
-
-  // Clave única para este comprobante: mes + key del pago
   const monthKey  = keyOf(db.currentYear, db.currentMonth);
   const storageKey = (monthKey + '__' + _proofKey).replace(/[^a-zA-Z0-9_]/g,'_');
-
-  // Actualizar payments preservando todo lo que ya había
   m.payments[_proofKey] = {
     paid:      wasPaid,
     amount:    prevAmt,
@@ -1794,13 +1724,8 @@ function saveProof(data, type){
     proofType: type,
     proofDate: today()
   };
-
-  // 1. Guardar blob en localStorage (acceso inmediato)
   try{ localStorage.setItem('fcup_proof_'+storageKey, data); }catch(e){ console.warn('proof local save:',e); }
-
-  // 2. Guardar en Firestore en documento separado
   if(window._saveProofToFirestore) window._saveProofToFirestore(activeUserId, storageKey, data);
-
   cleanOldProofs();
   save(); closeProof(); drawDashboard();
   showMsg('Comprobante guardado ✅');
@@ -1812,9 +1737,7 @@ function deleteProof(){
   const payInfo = m.payments[_proofKey];
   if(payInfo && typeof payInfo==='object'){
     const ref = payInfo.proofRef;
-    // Borrar de localStorage
     if(ref) try{ localStorage.removeItem('fcup_proof_' + ref); }catch(e){}
-    // Marcar como borrado en Firestore
     if(ref && window._deleteProofFromFirestore) window._deleteProofFromFirestore(activeUserId, ref);
     delete payInfo.proofRef; delete payInfo.proofType; delete payInfo.proofDate;
   }
@@ -1828,7 +1751,6 @@ function closeProof(){
 }
 
 function cleanOldProofs(){
-  // Borrar comprobantes de meses con más de 6 meses de antigüedad
   const now = new Date();
   Object.keys(db.data).forEach(k => {
     const [y, mo] = k.split('-').map(Number);
@@ -1838,9 +1760,7 @@ function cleanOldProofs(){
       Object.keys(monthData.payments || {}).forEach(pk => {
         const p = monthData.payments[pk];
         if(p && typeof p === 'object' && p.proofRef){
-          // Borrar de localStorage
           try{ localStorage.removeItem('fcup_proof_' + p.proofRef); }catch(e){}
-          // Marcar borrado en Firestore
           if(window._deleteProofFromFirestore) window._deleteProofFromFirestore(activeUserId, p.proofRef);
           delete p.proofRef; delete p.proofType; delete p.proofDate;
         }
@@ -1849,7 +1769,6 @@ function cleanOldProofs(){
   });
 }
 
-// Cerrar proof modal al click fuera
 document.getElementById('proofModal').addEventListener('click', e => {
   if(e.target === document.getElementById('proofModal')) closeProof();
 });
@@ -1871,7 +1790,6 @@ function saveModal(){
     const limit=+document.getElementById('mLimit').value;
     const cutDay=+document.getElementById('mCut').value;
     const payDay=+document.getElementById('mPayDay').value;
-    // Propagar a TODOS los meses (la tarjeta es la misma siempre)
     Object.values(db.data).forEach(mo=>{
       const x=(mo.cards||[]).find(card=>card.id===_mId);
       if(x){x.alias=alias;x.bank=bank;x.last4=last4;x.limit=limit;x.cutDay=cutDay;x.payDay=payDay;}
@@ -1888,17 +1806,14 @@ document.getElementById('modalBg').addEventListener('click',e=>{if(e.target===do
 // ══════════════════════════════════════════════════════
 renderLoginScreen();
 
-// ── Botones del login (btnYaTengo / btnSoyNuevo) ──────────────────────────
 document.getElementById('btnYaTengo').addEventListener('click',()=>{
   const users=getUsers();
   document.getElementById('loginOptions').style.display='none';
   if(users.length){
-    // Dispositivo conocido: mostrar usuarios locales
     document.getElementById('userCardsList').style.display='flex';
     document.getElementById('userCardsList').style.flexDirection='column';
     document.getElementById('loginSub').textContent='Selecciona tu usuario';
   } else {
-    // Dispositivo nuevo: buscar cuenta por apodo en la nube
     document.getElementById('findUserSection').style.display='block';
     document.getElementById('loginSub').textContent='Busca tu cuenta por apodo';
   }
@@ -1909,7 +1824,6 @@ document.getElementById('btnSoyNuevo').addEventListener('click',()=>{
   document.getElementById('loginSub').textContent='Crea tu cuenta';
 });
 
-// Enter en PIN con teclado físico
 document.addEventListener('keydown',e=>{
   const pin=document.getElementById('pinSection');
   if(!pin||pin.style.display==='none')return;
